@@ -19,8 +19,9 @@ npm run db:init:local
 # 启动开发服务器（前端 + Worker 同时运行）
 npm run dev
 ```
-
-打开 http://localhost:5173 即可游玩。整个后端（注册/登录/排行榜/收藏）都在本地 Miniflare 里跑，
+贪吃蛇吃苹果：letian-1ow.pages.dev
+个人网站：https://cym-7jm.pages.dev/
+打开cym2.de5.net或http://localhost:5173（本地）即可游玩。整个后端（注册/登录/排行榜/收藏）都在本地 Miniflare 里跑，
 数据存在 `.wrangler/state` 的本地 SQLite 中。
 
 ---
