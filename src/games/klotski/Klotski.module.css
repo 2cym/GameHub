@@ -1,0 +1,164 @@
+.stagePad {
+  padding: 16px;
+}
+
+.layoutRow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+}
+
+/* 4 列 × 5 行；用宽度驱动，纵横比 4:5 */
+.board {
+  --w: min(320px, calc(100vw - 2 * var(--container-pad) - 48px));
+  position: relative;
+  width: var(--w);
+  max-width: 100%;
+  aspect-ratio: 4 / 5;
+  margin: 0 auto;
+  border-radius: 10px;
+  background: linear-gradient(160deg, #2a2036, #1a1530);
+  box-shadow: inset 0 0 0 2px var(--border-strong);
+  overflow: visible;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.hitCell {
+  position: absolute;
+  width: 25%;
+  height: 20%;
+  /* 点击层在棋子之下 */
+  z-index: 0;
+}
+
+.piece {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 8px;
+  background: linear-gradient(150deg, #5a4a86, #3c2f63);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  font-weight: 700;
+  cursor: grab;
+  touch-action: none;
+  transition:
+    left 0.12s ease,
+    top 0.12s ease,
+    box-shadow 0.15s ease;
+  /* 留出内边距形成格间缝隙 */
+  background-clip: padding-box;
+  margin: 2px;
+  width: calc(100% - 4px);
+}
+.piece:active {
+  cursor: grabbing;
+}
+
+.piece.target {
+  background: linear-gradient(150deg, #d84a4a, #a82828);
+  border-color: rgba(255, 209, 102, 0.5);
+  box-shadow: 0 0 18px rgba(255, 92, 138, 0.45);
+}
+
+.piece.pieceSel {
+  box-shadow: 0 0 0 2px var(--accent), 0 4px 10px rgba(0, 0, 0, 0.45);
+}
+
+.pieceName {
+  font-size: clamp(13px, 3.4vw, 20px);
+  letter-spacing: 1px;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* 底部出口缺口指示 */
+.exit {
+  position: absolute;
+  left: 25%;
+  bottom: -6px;
+  width: 50%;
+  height: 6px;
+  border-radius: 0 0 6px 6px;
+  background: var(--gold);
+  box-shadow: 0 0 12px rgba(255, 209, 102, 0.7);
+  z-index: 1;
+}
+
+.controls {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  justify-content: center;
+}
+
+.sideCol {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 320px;
+}
+
+.layoutList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.layoutChip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.layoutPar {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.layoutOn {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+
+.tip {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  text-align: center;
+  margin: 0;
+}
+
+@media (min-width: 720px) {
+  .layoutRow {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: center;
+  }
+  .sideCol {
+    padding-top: 8px;
+  }
+}
+
+@media (max-width: 560px) {
+  .stagePad {
+    padding: 10px;
+  }
+}

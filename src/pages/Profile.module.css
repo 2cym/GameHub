@@ -1,0 +1,163 @@
+.page {
+  padding: 34px 0 70px;
+  animation: fade-up 0.4s ease both;
+}
+
+.guest {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding-top: 110px;
+  text-align: center;
+}
+
+.guest p {
+  color: var(--text-dim);
+  max-width: 420px;
+}
+
+.userCard {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 22px 26px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(500px 160px at 12% -30%, rgba(124, 92, 255, 0.28), transparent 70%),
+    var(--surface);
+}
+
+.bigAvatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  font-size: 28px;
+  font-weight: 800;
+  color: #fff;
+  box-shadow: var(--glow-primary);
+}
+
+.username {
+  font-size: 24px;
+}
+
+.email {
+  font-size: 13.5px;
+  color: var(--text-dim);
+}
+
+.section {
+  margin-top: 30px;
+}
+
+.sectionTitle {
+  font-size: 18px;
+  margin-bottom: 14px;
+}
+
+.bestsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 14px;
+}
+
+.bestCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 16px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  transition: transform 0.18s ease, border-color 0.18s ease;
+}
+
+.bestCard:active {
+  transform: translateY(-1px);
+  border-color: var(--primary);
+}
+
+.bestEmoji {
+  font-size: 30px;
+}
+
+.bestName {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.bestScore {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--gold);
+}
+
+.bestLabel {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.favs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.favChip {
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 14px;
+  transition: border-color 0.18s ease;
+}
+
+.favChip:active {
+  border-color: var(--gold);
+}
+
+.recentList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-width: 640px;
+}
+
+.recentRow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 14px;
+}
+
+.recentScore {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.recentTime {
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+
+.emptyLine {
+  color: var(--text-faint);
+  font-size: 14px;
+}

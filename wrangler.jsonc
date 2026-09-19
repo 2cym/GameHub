@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gamehub",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-06-01",
+  "assets": {
+    "directory": "./dist/client",
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "gamehub-db",
+      "database_id": "5b2be9ae-e434-4517-99cf-45edda4db070"
+    }
+  ],
+  "vars": {
+    // 发件人；RESEND_API_KEY 走 npx wrangler secret put，不写入本文件
+    "MAIL_FROM": "GameHub <onboarding@resend.dev>"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

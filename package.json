@@ -1,0 +1,33 @@
+{
+  "name": "gamehub",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "GameHub - 可玩小游戏集合网站",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json",
+    "deploy": "vite build && wrangler deploy",
+    "db:init:local": "wrangler d1 execute gamehub-db --local --file=./schema.sql",
+    "db:init:remote": "wrangler d1 execute gamehub-db --remote --file=./schema.sql"
+  },
+  "dependencies": {
+    "hono": "^4.7.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.0",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.0.0",
+    "@cloudflare/workers-types": "^5.20260911.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "~5.7.2",
+    "vite": "^6.3.5",
+    "wrangler": "^4.14.0"
+  }
+}

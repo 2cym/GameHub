@@ -1,0 +1,195 @@
+.stagePad {
+  padding: 14px;
+}
+
+.layout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+}
+
+.board {
+  --size: min(430px, calc(100vw - 2 * var(--container-pad) - 32px));
+  --cell: calc(var(--size) / 9);
+  display: grid;
+  grid-template-columns: repeat(9, var(--cell));
+  grid-template-rows: repeat(9, var(--cell));
+  width: var(--size);
+  max-width: 100%;
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+  border: 2px solid var(--border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+  user-select: none;
+}
+
+.cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: clamp(15px, calc(var(--cell) * 0.46), 26px);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.08s ease;
+}
+
+.cell.br {
+  border-right: 2px solid var(--border-strong);
+}
+.cell.bb {
+  border-bottom: 2px solid var(--border-strong);
+}
+.cell:nth-child(9n) {
+  border-right: none;
+}
+/* 最底行去下边线 */
+.cell:nth-child(n + 73) {
+  border-bottom: none;
+}
+
+.cell:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.cell.given .num {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.cell.same {
+  background: var(--accent-soft);
+}
+
+.cell.sel {
+  background: var(--primary-soft);
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+
+.cell.conflict {
+  background: rgba(255, 107, 107, 0.18);
+}
+.cell.conflict .num {
+  color: var(--danger);
+}
+
+.num {
+  line-height: 1;
+}
+
+.notes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  width: 100%;
+  height: 100%;
+  padding: 1px;
+}
+.notes i {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-style: normal;
+  font-size: clamp(7px, calc(var(--cell) * 0.2), 11px);
+  color: var(--text-dim);
+  line-height: 1;
+}
+
+/* 侧边操作区 */
+.side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 430px;
+}
+
+.diffRow {
+  display: flex;
+  gap: 8px;
+}
+
+.chip {
+  padding: 7px 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.chipOn {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--text);
+}
+
+.pad {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+  width: 100%;
+}
+
+.padBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 48px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 19px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  transition: all 0.1s ease;
+}
+.padBtn:active {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  transform: scale(0.95);
+}
+.padBtn.noteOn {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+@media (min-width: 720px) {
+  .layout {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: center;
+  }
+  .side {
+    max-width: 220px;
+    padding-top: 8px;
+  }
+  .pad {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  .stagePad {
+    padding: 8px;
+  }
+}

@@ -1,0 +1,143 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(5, 7, 14, 0.7);
+  backdrop-filter: blur(8px);
+  animation: fade-up 0.2s ease both;
+}
+
+.modal {
+  position: relative;
+  width: min(94vw, 400px);
+  padding: 28px 26px 26px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow), var(--glow-primary);
+}
+
+.close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.close:active {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+@media (hover: hover) {
+  .close:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+}
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--bg-deep);
+  margin-bottom: 14px;
+}
+
+.tab {
+  flex: 1;
+  padding: 9px 0;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-dim);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.tabOn {
+  background: var(--primary-soft);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(124, 92, 255, 0.5);
+}
+
+.slogan {
+  margin-bottom: 18px;
+  font-size: 13.5px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13.5px;
+  color: var(--text-dim);
+}
+
+.error {
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 107, 107, 0.4);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 107, 107, 0.1);
+  color: var(--danger);
+  font-size: 13.5px;
+}
+
+.codeRow {
+  display: flex;
+  gap: 8px;
+}
+
+.codeRow input {
+  flex: 1;
+  min-width: 0;
+  letter-spacing: 4px;
+}
+
+.sendBtn {
+  flex-shrink: 0;
+  padding: 0 14px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.linkBtn {
+  align-self: flex-end;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+@media (hover: hover) {
+  .linkBtn:hover {
+    color: var(--primary);
+  }
+}

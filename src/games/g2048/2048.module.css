@@ -1,0 +1,89 @@
+.stagePad {
+  padding: 10px;
+}
+
+.board {
+  --n: 4;
+  --gap: 10px;
+  /* 由内边距变量推导，不再依赖写死的魔法数字；
+     末尾的安全余量用于容纳滚动条与亚像素取整 */
+  --board-size: min(
+    400px,
+    calc(100vw - 2 * var(--container-pad) - 2 * var(--game-pad-x) - 32px)
+  );
+  --cell: calc((var(--board-size) - (var(--n) + 1) * var(--gap)) / var(--n));
+
+  position: relative;
+  width: var(--board-size);
+  max-width: 100%;
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.bg {
+  position: absolute;
+  inset: var(--gap);
+  display: grid;
+  grid-template-columns: repeat(var(--n), var(--cell));
+  grid-template-rows: repeat(var(--n), var(--cell));
+  gap: var(--gap);
+}
+
+.bg span {
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.tile {
+  position: absolute;
+  top: var(--gap);
+  left: var(--gap);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--cell);
+  height: var(--cell);
+  border-radius: 8px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  color: #2b2418;
+  font-size: clamp(20px, calc(var(--cell) * 0.42), 38px);
+  transform: translate(
+    calc(var(--x) * (var(--cell) + var(--gap))),
+    calc(var(--y) * (var(--cell) + var(--gap)))
+  );
+  transition: transform 0.13s ease-in-out;
+  z-index: 2;
+  user-select: none;
+}
+
+.tile.white {
+  color: #fff9f0;
+}
+
+.tile.glow {
+  box-shadow: 0 0 22px rgba(255, 209, 102, 0.55);
+}
+
+.tile.new {
+  animation: pop-in 0.18s ease both;
+}
+
+.tile.merged {
+  animation: tile-bump 0.2s ease;
+  z-index: 3;
+}
+
+@keyframes tile-bump {
+  0% {
+    scale: 1;
+  }
+  55% {
+    scale: 1.18;
+  }
+  100% {
+    scale: 1;
+  }
+}

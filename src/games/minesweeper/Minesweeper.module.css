@@ -1,0 +1,131 @@
+.minesStage {
+  /* 桌面端棋盘不超过这个宽度，避免格子过大 */
+  max-width: min(400px, 100%);
+}
+
+.grid {
+  display: grid;
+  /* 用 1fr + aspect-ratio 让格子自动撑满可用宽度：
+     没有任何魔法数字，也就不可能溢出 */
+  grid-template-columns: repeat(9, 1fr);
+  gap: 4px;
+  padding: 5px;
+  width: 100%;
+}
+
+.cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1 / 1;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: clamp(13px, 4.2vw, 19px);
+  font-weight: 800;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.1s ease;
+  padding: 0;
+  color: inherit;
+}
+
+.cell:active:not(.open) {
+  transform: scale(0.93);
+}
+
+/* 插旗模式下未翻开的格子给出可辨识的提示色，
+   避免玩家在错误的模式里挖到雷 */
+.flagArmed:not(.open) {
+  background: rgba(255, 209, 102, 0.14);
+  border-color: rgba(255, 209, 102, 0.45);
+}
+
+.open {
+  background: var(--bg-deep);
+  border-color: rgba(255, 255, 255, 0.05);
+  cursor: default;
+}
+
+.boom {
+  background: rgba(255, 82, 82, 0.22);
+  border-color: rgba(255, 107, 107, 0.5);
+}
+
+/* ---------- 模式开关 ---------- */
+
+.modeBar {
+  display: flex;
+  gap: 8px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.modeBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 108px;
+  min-height: 46px;
+  padding: 0 20px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.modeBtn:active {
+  transform: scale(0.97);
+}
+
+.modeOn {
+  background: var(--primary-soft);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(124, 92, 255, 0.5);
+}
+
+@media (hover: hover) {
+  .cell:not(.open):hover {
+    background: var(--surface-3);
+    border-color: var(--border-strong);
+  }
+  .modeBtn:hover {
+    color: var(--text);
+  }
+}
+
+@media (max-width: 768px) {
+  /* 手机上让棋盘抵消游戏区内边距，格子尽可能大 */
+  .minesStage {
+    width: calc(100% + 2 * var(--game-pad-x));
+    max-width: calc(100% + 2 * var(--game-pad-x));
+    margin-left: calc(-1 * var(--game-pad-x));
+    margin-right: calc(-1 * var(--game-pad-x));
+    border-radius: var(--radius-sm);
+  }
+  .grid {
+    gap: 3px;
+    padding: 4px;
+  }
+  .modeBar {
+    width: 100%;
+    max-width: 340px;
+  }
+  .modeBtn {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+}

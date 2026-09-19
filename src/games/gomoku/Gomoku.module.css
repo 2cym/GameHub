@@ -1,0 +1,189 @@
+.stagePad {
+  padding: 10px;
+}
+
+.sideRow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+}
+
+/* 15×15 棋盘：交叉点落子，每格是一个交叉点 */
+.board {
+  --size: min(
+    460px,
+    calc(100vw - 2 * var(--container-pad) - 2 * var(--game-pad-x) - 28px)
+  );
+  --gap: calc(var(--size) / (15 - 1));
+  display: grid;
+  grid-template-columns: repeat(15, var(--gap));
+  grid-template-rows: repeat(15, var(--gap));
+  width: max-content;
+  max-width: 100%;
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+  padding: calc(var(--gap) * 0.5);
+  background: linear-gradient(145deg, #e8c884, #c89854);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  position: relative;
+}
+
+.cell {
+  position: relative;
+  width: var(--gap);
+  height: var(--gap);
+  cursor: pointer;
+}
+/* 格线：用伪元素画十字 */
+.cell::before,
+.cell::after {
+  content: '';
+  position: absolute;
+  background: rgba(60, 40, 10, 0.55);
+  pointer-events: none;
+}
+.cell::before {
+  /* 水平线 */
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+.cell::after {
+  /* 垂直线 */
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+/* 边界格隐藏外侧线 */
+.cell:nth-child(15n + 1)::before {
+  left: 50%;
+}
+.cell:nth-child(15n)::before {
+  right: 50%;
+}
+.cell:nth-child(-n + 15)::after {
+  top: 50%;
+}
+.cell:nth-child(n + 211)::after {
+  bottom: 50%;
+}
+
+.stone {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 84%;
+  height: 84%;
+  border-radius: 50%;
+  z-index: 2;
+  pointer-events: none;
+  animation: stone-in 0.15s ease both;
+}
+.stone.black {
+  background: radial-gradient(circle at 35% 30%, #555, #111 60%, #000);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+.stone.white {
+  background: radial-gradient(circle at 35% 30%, #fff, #ddd 60%, #bbb);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+}
+.stone.last {
+  box-shadow: 0 0 0 2px var(--accent), 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+.stone.winStone {
+  animation: win-pulse 0.6s ease-in-out infinite alternate;
+}
+
+@keyframes stone-in {
+  from {
+    transform: scale(0.3);
+    opacity: 0.5;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes win-pulse {
+  from {
+    box-shadow: 0 0 0 2px var(--gold), 0 0 8px rgba(255, 209, 102, 0.6);
+  }
+  to {
+    box-shadow: 0 0 0 3px var(--gold), 0 0 20px rgba(255, 209, 102, 0.9);
+  }
+}
+
+/* 侧边控制 */
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 460px;
+}
+.controlGroup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.controlLabel {
+  font-size: 14px;
+  color: var(--text-dim);
+  min-width: 3em;
+}
+.chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.chip {
+  padding: 6px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.chipOn {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--text);
+}
+.tip {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  text-align: center;
+  margin: 0;
+}
+
+@media (min-width: 860px) {
+  .sideRow {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: center;
+  }
+  .controls {
+    max-width: 220px;
+    padding-top: 4px;
+  }
+}
+
+@media (max-width: 560px) {
+  .stagePad {
+    padding: 6px;
+  }
+  .controlLabel {
+    min-width: 2.5em;
+  }
+}

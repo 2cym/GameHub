@@ -1,0 +1,192 @@
+.stagePad {
+  padding: 6px;
+}
+
+.sideRow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+}
+
+/* 19×19 棋盘 */
+.board {
+  --size: min(
+    520px,
+    calc(100vw - 2 * var(--container-pad) - 2 * var(--game-pad-x) - 20px)
+  );
+  --gap: calc(var(--size) / 19);
+  display: grid;
+  grid-template-columns: repeat(19, var(--gap));
+  grid-template-rows: repeat(19, var(--gap));
+  width: max-content;
+  max-width: 100%;
+  aspect-ratio: 1;
+  margin: 0 auto;
+  padding: calc(var(--gap) * 0.5);
+  background: linear-gradient(145deg, #e8c884, #c89854);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  position: relative;
+}
+
+.cell {
+  position: relative;
+  width: var(--gap);
+  height: var(--gap);
+  cursor: pointer;
+}
+.cell::before,
+.cell::after {
+  content: '';
+  position: absolute;
+  background: rgba(60, 40, 10, 0.5);
+  pointer-events: none;
+}
+.cell::before {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+.cell::after {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+/* 边界格隐藏外侧线 */
+.cell:nth-child(19n + 1)::before {
+  left: 50%;
+}
+.cell:nth-child(19n)::before {
+  right: 50%;
+}
+.cell:nth-child(-n + 19)::after {
+  top: 50%;
+}
+.cell:nth-child(n + 343)::after {
+  bottom: 50%;
+}
+
+/* 星位（简化：九个星位用伪元素标记） */
+.cell:nth-child(1)::before {
+  /* 仅作占位，星位由棋盘背景纹理体现 */
+}
+
+.stone {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 86%;
+  height: 86%;
+  border-radius: 50%;
+  z-index: 2;
+  pointer-events: none;
+  animation: stone-in 0.12s ease both;
+}
+.stone.black {
+  background: radial-gradient(circle at 35% 30%, #555, #111 60%, #000);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+.stone.white {
+  background: radial-gradient(circle at 35% 30%, #fff, #ddd 60%, #bbb);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+.stone.last {
+  box-shadow: 0 0 0 2px var(--accent), 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.koMark {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 40%;
+  height: 40%;
+  border: 2px solid var(--danger);
+  border-radius: 4px;
+  z-index: 1;
+  pointer-events: none;
+}
+
+@keyframes stone-in {
+  from {
+    transform: scale(0.4);
+    opacity: 0.6;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* 侧边控制 */
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 520px;
+}
+.controlGroup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.controlLabel {
+  font-size: 14px;
+  color: var(--text-dim);
+  min-width: 3em;
+}
+.chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.chip {
+  padding: 6px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.chipOn {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--text);
+}
+.tip {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  text-align: center;
+  margin: 0;
+}
+
+@media (min-width: 900px) {
+  .sideRow {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: center;
+  }
+  .controls {
+    max-width: 220px;
+    padding-top: 4px;
+  }
+}
+
+@media (max-width: 560px) {
+  .stagePad {
+    padding: 4px;
+  }
+  .controlLabel {
+    min-width: 2.5em;
+  }
+}

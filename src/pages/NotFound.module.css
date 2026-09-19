@@ -1,0 +1,18 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 110px 0;
+  text-align: center;
+}
+
+.code {
+  font-family: var(--font-mono);
+  font-size: 96px;
+  line-height: 1;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}

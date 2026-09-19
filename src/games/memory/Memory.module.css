@@ -1,0 +1,94 @@
+.grid {
+  /* 1fr + aspect-ratio：卡片自动撑满可用宽度，无魔法数字、不会溢出 */
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  padding: 14px;
+  width: 100%;
+}
+
+.card {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  perspective: 600px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.inner,
+.faceBack,
+.faceFront {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.card > .inner {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  transition: transform 0.35s ease;
+}
+
+.faceBack,
+.faceFront {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.faceBack {
+  background: linear-gradient(135deg, var(--surface-2), var(--surface-3));
+  border: 1px solid var(--border-strong);
+  color: var(--text-faint);
+  font-size: clamp(20px, 7vw, 34px);
+  font-weight: 800;
+}
+
+.faceFront {
+  background: var(--primary-soft);
+  border: 1px solid var(--primary);
+  font-size: clamp(26px, 8.5vw, 40px);
+  transform: rotateY(180deg);
+}
+
+.flipped .inner {
+  transform: rotateY(180deg);
+}
+
+.matched .faceFront {
+  border-color: var(--success);
+  background: rgba(61, 220, 151, 0.16);
+  box-shadow: 0 0 16px rgba(61, 220, 151, 0.35);
+}
+
+.card:active .faceBack {
+  border-color: var(--primary);
+}
+
+@media (hover: hover) {
+  .card:not(.flipped):hover .faceBack {
+    border-color: var(--primary);
+  }
+}
+
+@media (max-width: 768px) {
+  .grid {
+    gap: 8px;
+    padding: 10px;
+  }
+}

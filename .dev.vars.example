@@ -1,0 +1,16 @@
+# 本地开发环境变量示例
+# 复制为 .dev.vars 后使用（.dev.vars 已被 .gitignore 忽略）
+#
+# 生产环境请改用：
+#   npx wrangler secret put JWT_SECRET
+#   npx wrangler secret put RESEND_API_KEY
+
+JWT_SECRET=change-me-to-a-long-random-string
+
+# 邮件服务（Resend）：留空则进入 mock 模式（验证码不真正发送，打印到控制台并随接口返回）
+# 申请 Key：https://resend.com/api-keys
+RESEND_API_KEY=
+
+# 发件人。onboarding@resend.dev 为 Resend 测试地址（只能发给 Resend 账号本人邮箱）；
+# 要发给任意邮箱需在 Resend 验证自有域名后改成 GameHub <noreply@你的域名>
+MAIL_FROM="GameHub <onboarding@resend.dev>"

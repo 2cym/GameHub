@@ -1,0 +1,123 @@
+.hero {
+  padding: 72px 0 34px;
+  text-align: center;
+  animation: fade-up 0.5s ease both;
+}
+
+.title {
+  font-size: clamp(32px, 6vw, 52px);
+  line-height: 1.25;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+
+.grad {
+  background: linear-gradient(120deg, var(--primary) 10%, var(--accent) 90%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 20px rgba(124, 92, 255, 0.35));
+}
+
+.sub {
+  max-width: 560px;
+  margin: 16px auto 0;
+  color: var(--text-dim);
+  font-size: 16px;
+}
+
+.heroStats {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 18px 0 26px;
+}
+
+.search {
+  max-width: 320px;
+  border-radius: 999px;
+}
+
+.cats {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cat {
+  padding: 8px 18px;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: all 0.18s ease;
+}
+
+.cat:active {
+  transform: scale(0.96);
+}
+
+.catOn {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--text);
+}
+
+@media (hover: hover) {
+  .cat:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+}
+
+.grid {
+  display: grid;
+  /* min(250px,100%) 保证极窄屏也不会被最小列宽撑破 */
+  grid-template-columns: repeat(auto-fill, minmax(min(250px, 100%), 1fr));
+  gap: 20px;
+  padding-bottom: 30px;
+}
+
+.empty {
+  grid-column: 1 / -1;
+  padding: 40px 0;
+  text-align: center;
+  color: var(--text-faint);
+}
+
+.loginHint {
+  padding: 10px 0 46px;
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--text-faint);
+}
+
+@media (max-width: 640px) {
+  .hero {
+    padding-top: 44px;
+  }
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .search {
+    max-width: none;
+  }
+  .cats {
+    justify-content: center;
+  }
+}

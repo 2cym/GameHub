@@ -1,0 +1,116 @@
+.stagePad {
+  padding: 16px;
+}
+
+.board {
+  --max-size: min(
+    440px,
+    calc(100vw - 2 * var(--container-pad) - 2 * var(--game-pad-x) - 40px)
+  );
+  /* 以宽/高中的较大维度限制单元格，保证棋盘整体不溢出 */
+  --cell: min(
+    calc(var(--max-size) / var(--w)),
+    calc(var(--max-size) / var(--h))
+  );
+  display: grid;
+  grid-template-columns: repeat(var(--w), var(--cell));
+  grid-template-rows: repeat(var(--h), var(--cell));
+  width: max-content;
+  max-width: 100%;
+  margin: 0 auto;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.cell {
+  position: relative;
+  width: var(--cell);
+  height: var(--cell);
+  background: #1b2138;
+}
+
+.cell.wall {
+  background: linear-gradient(145deg, #3a4468, #232c4a);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.cell.goal::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 30%;
+  height: 30%;
+  border-radius: 50%;
+  background: var(--gold);
+  opacity: 0.55;
+}
+
+.cell.box {
+  z-index: 1;
+}
+.cell.box::before {
+  content: '';
+  position: absolute;
+  inset: 12%;
+  border-radius: 6px;
+  background: linear-gradient(145deg, #d9903a, #a86a1e);
+  box-shadow:
+    inset 0 0 0 2px rgba(0, 0, 0, 0.25),
+    0 2px 4px rgba(0, 0, 0, 0.4);
+}
+
+.cell.boxOnGoal {
+  z-index: 1;
+}
+.cell.boxOnGoal::before {
+  content: '';
+  position: absolute;
+  inset: 12%;
+  border-radius: 6px;
+  background: linear-gradient(145deg, #3ddc97, #1f9d68);
+  box-shadow:
+    inset 0 0 0 2px rgba(0, 0, 0, 0.2),
+    0 0 12px rgba(61, 220, 151, 0.6);
+}
+.cell.boxOnGoal::after {
+  background: transparent;
+}
+
+.playerDot {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 62%;
+  height: 62%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #7ceeff, #0ea0c0);
+  box-shadow: 0 0 12px rgba(0, 229, 255, 0.55);
+  z-index: 2;
+}
+
+.deadlockTip {
+  margin-top: 12px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(255, 107, 107, 0.15);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  font-size: 13px;
+  text-align: center;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+@media (max-width: 560px) {
+  .stagePad {
+    padding: 10px;
+  }
+}

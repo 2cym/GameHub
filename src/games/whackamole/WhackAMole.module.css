@@ -1,0 +1,141 @@
+.moleStage {
+  max-width: min(400px, 100%);
+}
+
+.field {
+  display: grid;
+  /* 1fr + aspect-ratio：洞口自动撑满可用宽度，不会溢出 */
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  padding: 16px;
+  width: 100%;
+}
+
+/* 整个洞口就是按钮：点击目标 = 洞的大小，而非地鼠本体 */
+.hole {
+  position: relative;
+  display: block;
+  aspect-ratio: 1 / 1;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  border-radius: 50%;
+}
+
+.holeActive:active .mole {
+  transform: translateX(-50%) scale(0.8);
+}
+
+.holeBg {
+  position: absolute;
+  left: 50%;
+  bottom: 6%;
+  width: 88%;
+  height: 36%;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse at center,
+    #05070f 0%,
+    #10141f 70%,
+    transparent 72%
+  );
+  box-shadow: inset 0 6px 14px rgba(0, 0, 0, 0.8);
+}
+
+/* 地鼠只是视觉层，不参与命中判定 */
+.mole {
+  position: absolute;
+  left: 50%;
+  bottom: 8%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 70%;
+  height: 70%;
+  font-size: clamp(28px, 9vw, 44px);
+  pointer-events: none;
+  animation: mole-rise 0.18s ease both;
+  filter: drop-shadow(0 6px 8px rgba(0, 0, 0, 0.5));
+  transition: transform 0.08s ease;
+}
+
+.gold {
+  filter: drop-shadow(0 0 12px rgba(255, 209, 102, 0.8));
+  animation: mole-rise 0.14s ease both, gold-pulse 0.9s ease-in-out infinite;
+}
+
+.bonk {
+  position: absolute;
+  left: 50%;
+  top: 4%;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: 20px;
+  color: var(--gold);
+  text-shadow: 0 0 12px rgba(255, 209, 102, 0.7);
+  animation: bonk-float 0.48s ease both;
+  pointer-events: none;
+}
+
+@keyframes mole-rise {
+  from {
+    translate: 0 60%;
+    opacity: 0;
+  }
+  to {
+    translate: 0 0;
+    opacity: 1;
+  }
+}
+
+@keyframes gold-pulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 8px rgba(255, 209, 102, 0.6));
+  }
+  50% {
+    filter: drop-shadow(0 0 18px rgba(255, 209, 102, 1));
+  }
+}
+
+@keyframes bonk-float {
+  from {
+    opacity: 1;
+    translate: 0 0;
+  }
+  to {
+    opacity: 0;
+    translate: 0 -34px;
+  }
+}
+
+@media (hover: hover) {
+  .hole:hover .holeBg {
+    background: radial-gradient(
+      ellipse at center,
+      #0a0e1c 0%,
+      #161c2c 70%,
+      transparent 72%
+    );
+  }
+}
+
+@media (max-width: 768px) {
+  .moleStage {
+    width: calc(100% + 2 * var(--game-pad-x));
+    max-width: calc(100% + 2 * var(--game-pad-x));
+    margin-left: calc(-1 * var(--game-pad-x));
+    margin-right: calc(-1 * var(--game-pad-x));
+    border-radius: var(--radius-sm);
+  }
+  .field {
+    gap: 8px;
+    padding: 10px;
+  }
+}

@@ -1,0 +1,51 @@
+:root {
+  /* 色板 */
+  --bg: #0b0e1a;
+  --bg-deep: #070912;
+  --surface: #131829;
+  --surface-2: #1a2138;
+  --surface-3: #232c4a;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  --primary: #7c5cff;
+  --primary-soft: rgba(124, 92, 255, 0.16);
+  --accent: #00e5ff;
+  --accent-soft: rgba(0, 229, 255, 0.12);
+  --hot: #ff5ca8;
+  --gold: #ffd166;
+  --success: #3ddc97;
+  --danger: #ff6b6b;
+
+  --text: #eef1fb;
+  --text-dim: #9aa3c0;
+  --text-faint: #5c6584;
+
+  /* 形状与阴影 */
+  --radius-sm: 10px;
+  --radius: 16px;
+  --radius-lg: 22px;
+  --glow-primary: 0 0 24px rgba(124, 92, 255, 0.35);
+  --glow-accent: 0 0 24px rgba(0, 229, 255, 0.3);
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+
+  /* 字体 */
+  --font:
+    'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', 'Segoe UI',
+    system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+
+  /* 布局 */
+  --container: 1120px;
+  --nav-h: 64px;
+  /* 内边距集中管理，便于移动端整体收紧；游戏内需要满宽的元素可反向抵消 */
+  --container-pad: 24px;
+  --game-pad-x: 22px;
+}
+
+@media (max-width: 768px) {
+  :root {
+    --container-pad: 12px;
+    --game-pad-x: 10px;
+  }
+}

@@ -1,0 +1,219 @@
+/* 所有游戏共享的框架样式 */
+
+.frame {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  /* 关键：网格/弹性子项默认 min-width:auto 会被内容撑破容器，这里统一收敛 */
+  min-width: 0;
+}
+
+.hud {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.hudItem {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 18px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.hudLabel {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.hudValue {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent);
+  min-width: 2ch;
+  text-align: right;
+}
+
+.stage {
+  position: relative;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-deep);
+  box-shadow: var(--shadow), inset 0 0 60px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  touch-action: none;
+  /* 画布类游戏舞台：跟随可用宽度收缩，绝不溢出 */
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0 auto;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+  background: rgba(7, 9, 18, 0.82);
+  backdrop-filter: blur(6px);
+  animation: fade-up 0.25s ease both;
+}
+
+.overlayTitle {
+  font-size: 26px;
+  letter-spacing: 1px;
+}
+
+.overlayHint {
+  max-width: 300px;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.overlayScore {
+  font-size: 15px;
+  color: var(--text-dim);
+}
+
+.overlayScore strong {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 44px;
+  line-height: 1.3;
+  color: var(--gold);
+  text-shadow: 0 0 24px rgba(255, 209, 102, 0.5);
+}
+
+/* ---------- 触控控件 ----------
+   判定条件同时覆盖「窄屏」与「存在粗指针（触摸）」，避免
+   (hover:none) and (pointer:coarse) 在混合设备（触控笔平板、接鼠标的手机）上失配。 */
+
+.touchPad,
+.touchBar {
+  display: none;
+}
+
+.touchBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 20px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  padding: 0;
+}
+
+.touchBtn:active {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  transform: scale(0.95);
+}
+
+/* 四向方向盘（贪吃蛇） */
+.touchPad {
+  grid-template-columns: repeat(3, 58px);
+  grid-template-rows: repeat(2, 58px);
+  justify-content: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+/* 贴底操作条（俄罗斯方块）：始终可见，不随页面滚动消失 */
+.touchBar {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  width: 100%;
+  gap: 8px;
+  padding: 8px 0 calc(8px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(
+    to top,
+    var(--bg) 62%,
+    rgba(11, 14, 26, 0.86) 82%,
+    transparent
+  );
+}
+
+.touchBar .touchBtn {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 64px;
+  height: 56px;
+}
+
+@media (max-width: 768px), (any-pointer: coarse) {
+  .touchPad {
+    display: grid;
+  }
+  .touchBar {
+    display: flex;
+    justify-content: center;
+  }
+  .touchBtn {
+    /* 触摸目标不小于 48px（Material 建议），并留出足够间距防误触 */
+    min-height: 48px;
+  }
+}
+
+/* 方向盘方向定位 */
+.touchPad .touchBtn[data-dir='up'] {
+  grid-column: 2;
+  grid-row: 1;
+}
+.touchPad .touchBtn[data-dir='left'] {
+  grid-column: 1;
+  grid-row: 2;
+}
+.touchPad .touchBtn[data-dir='down'] {
+  grid-column: 2;
+  grid-row: 2;
+}
+.touchPad .touchBtn[data-dir='right'] {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+/* 窄屏下压缩 HUD，给游戏区让出纵向空间 */
+@media (max-width: 560px) {
+  .frame {
+    gap: 12px;
+  }
+  .hud {
+    gap: 6px;
+  }
+  .hudItem {
+    padding: 6px 12px;
+  }
+  .hudLabel {
+    font-size: 12px;
+  }
+  .hudValue {
+    font-size: 16px;
+  }
+  .overlayTitle {
+    font-size: 21px;
+  }
+  .overlayScore strong {
+    font-size: 34px;
+  }
+}

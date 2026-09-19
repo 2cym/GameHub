@@ -1,0 +1,155 @@
+.stagePad {
+  padding: 8px;
+}
+
+.sideRow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+}
+
+.board {
+  --size: min(
+    440px,
+    calc(100vw - 2 * var(--container-pad) - 2 * var(--game-pad-x) - 24px)
+  );
+  --cell: calc(var(--size) / 8);
+  display: grid;
+  grid-template-columns: repeat(8, var(--cell));
+  grid-template-rows: repeat(8, var(--cell));
+  width: var(--size);
+  max-width: 100%;
+  aspect-ratio: 1;
+  margin: 0 auto;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+.cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.cell.light {
+  background: #f0d9b5;
+}
+.cell.dark {
+  background: #b58863;
+}
+
+.dot {
+  position: absolute;
+  width: 26%;
+  height: 26%;
+  border-radius: 50%;
+  background: rgba(0, 160, 0, 0.55);
+  z-index: 2;
+}
+.ring {
+  position: absolute;
+  inset: 6%;
+  border-radius: 50%;
+  border: 3px solid rgba(0, 160, 0, 0.7);
+  z-index: 2;
+}
+
+.piece {
+  position: relative;
+  z-index: 3;
+  font-size: calc(var(--cell) * 0.78);
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.piece.white {
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6), 0 0 1px #000;
+}
+.piece.black {
+  color: #1a1a1a;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.3);
+}
+
+.cell.sel {
+  background: rgba(255, 209, 102, 0.6) !important;
+}
+.cell.lastFrom {
+  background: rgba(255, 209, 102, 0.35) !important;
+}
+.cell.lastTo {
+  background: rgba(255, 209, 102, 0.45) !important;
+}
+
+/* 侧边控制 */
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 440px;
+}
+.controlGroup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.controlLabel {
+  font-size: 14px;
+  color: var(--text-dim);
+  min-width: 3em;
+}
+.chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.chip {
+  padding: 6px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.chipOn {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--text);
+}
+.tip {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  text-align: center;
+  margin: 0;
+}
+
+@media (min-width: 860px) {
+  .sideRow {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: center;
+  }
+  .controls {
+    max-width: 220px;
+    padding-top: 4px;
+  }
+}
+
+@media (max-width: 560px) {
+  .stagePad {
+    padding: 4px;
+  }
+  .controlLabel {
+    min-width: 2.5em;
+  }
+}

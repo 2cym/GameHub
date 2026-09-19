@@ -1,0 +1,192 @@
+.page {
+  padding-bottom: 60px;
+}
+
+.crumbs {
+  display: flex;
+  gap: 8px;
+  padding: 20px 0 16px;
+  font-size: 13.5px;
+  color: var(--text-faint);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 24px;
+  align-items: start;
+}
+
+.gameArea {
+  /* 关键：Grid 子项默认 min-width:auto 会被宽内容（如 440px 画布）撑破，
+     导致整页横向滚动。必须显式归零，配合舞台的 max-width:100% 生效。 */
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 20px var(--game-pad-x) 26px;
+}
+
+.gameHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.gameTitle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 26px;
+}
+
+.gameEmoji {
+  font-size: 32px;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 420px;
+  color: var(--text-dim);
+  font-size: 15px;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: sticky;
+  top: calc(var(--nav-h) + 16px);
+  min-width: 0;
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 16px 18px;
+}
+
+.cardTitle {
+  font-size: 15.5px;
+  margin-bottom: 10px;
+  letter-spacing: 0.5px;
+}
+
+.howTo {
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.controls li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.myBest {
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.myBest strong {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 34px;
+  color: var(--gold);
+  text-shadow: 0 0 18px rgba(255, 209, 102, 0.4);
+  line-height: 1.4;
+}
+
+.bestSrc {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.loginTip {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+.linkBtn {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.missing {
+  padding: 90px 0;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+@media (hover: hover) {
+  .crumbs a:hover {
+    color: var(--accent);
+  }
+  .linkBtn:hover {
+    text-decoration: underline;
+  }
+}
+
+/* 单列时同样要 minmax(0,1fr)，否则列宽仍会被宽内容撑开 */
+@media (max-width: 920px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+  .panel {
+    position: static;
+  }
+}
+
+@media (max-width: 768px) {
+  .crumbs {
+    padding: 12px 0 10px;
+  }
+  .gameArea {
+    padding: 14px var(--game-pad-x) 18px;
+    border-radius: var(--radius);
+  }
+  .gameHeader {
+    margin-bottom: 12px;
+    gap: 8px;
+  }
+  .gameTitle {
+    font-size: 20px;
+    gap: 8px;
+  }
+  .gameEmoji {
+    font-size: 24px;
+  }
+  .card {
+    padding: 13px 14px;
+  }
+  .loading {
+    min-height: 300px;
+  }
+}
