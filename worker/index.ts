@@ -40,6 +40,14 @@ const GAME_IDS = new Set([
   'minesweeper',
   'memory',
   'whackamole',
+  'sudoku',
+  'sokoban',
+  'klotski',
+  'gomoku',
+  'xiangqi',
+  'chess',
+  'go',
+  'contra',
 ])
 
 async function loadUser(db: D1Database, id: string): Promise<AuthUser | null> {
