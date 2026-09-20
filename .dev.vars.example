@@ -7,8 +7,8 @@
 
 JWT_SECRET=change-me-to-a-long-random-string
 
-# 邮件服务（Resend）：留空则进入 mock 模式（验证码不真正发送，打印到控制台并随接口返回）
-# 申请 Key：https://resend.com/api-keys
+# 邮件服务（Resend）。留空即关闭验证功能：/api/auth/email-code 会返回 400「邮箱验证服务尚未启用」，
+# 且不签发任何验证码（不静默绕过验证）。申请 Key：https://resend.com/api-keys
 RESEND_API_KEY=
 
 # 发件人。onboarding@resend.dev 为 Resend 测试地址（只能发给 Resend 账号本人邮箱）；

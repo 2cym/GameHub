@@ -106,17 +106,22 @@ email_verifications(email, purpose, code_hash, salt, attempts, expires_at, creat
 
 ### 邮箱验证服务
 
-注册与忘记密码共用一套**邮箱验证码**流程，通过 [Resend](https://resend.com) HTTP API 发信
-（Workers 不支持 SMTP，只能走 HTTP）。
+注册与忘记密码共用一套**邮箱验证码**流程，通过 [Resend](https://resend.com) REST API 发信
+（Workers 不支持 SMTP，只能走 HTTP）。API Key 只放在环境变量 `RESEND_API_KEY` 里，不写进代码。
 
-- **本地 mock 模式**：`.dev.vars` 里 `RESEND_API_KEY` 留空即可，无需云账号——验证码会
-  随 `/api/auth/email-code` 的响应字段 `devCode` 返回，前端弹 toast 展示，同时打印到 Worker 控制台
-- **真实发送**：在 `.dev.vars`（本地）或 `npx wrangler secret put RESEND_API_KEY`（线上）填入
-  [Resend API Key](https://resend.com/api-keys)，发件人由 `MAIL_FROM` 控制
-- **安全策略**：验证码仅存 PBKDF2 哈希；10 分钟有效；错 5 次作废；60 秒重发冷却；校验成功即删除（单次有效）
+- **配置**：本地写进 `.dev.vars`；线上用 `npx wrangler secret put RESEND_API_KEY`（不要提交仓库）。
+  发件人由 `MAIL_FROM` 控制，放在 `wrangler.jsonc` 的 `vars` 里
+- **未配置密钥时直接拒绝**：接口返回 400「邮箱验证服务尚未启用」，**不会签发任何验证码**，
+  响应里也永远不带验证码——避免生产环境漏配密钥却静默绕过验证
+  （`sendMail` 内还有一层 502「邮件服务未配置」兜底）
+- **安全策略**：验证码仅存 PBKDF2 哈希；10 分钟有效；错 5 次作废；60 秒重发冷却；校验成功即删除（单次有效）。
+  密钥预检在签发验证码之前执行，避免用户拿到一个永远收不到邮件的验证码；
+  发送失败则作废刚签发的验证码
 - **发件地址说明**：默认 `onboarding@resend.dev` 是 Resend 的测试地址，**只能发给 Resend
   账号本人注册的邮箱**；要发给任意邮箱，需在 Resend 验证自有域名后把 `MAIL_FROM` 改为
   `GameHub <noreply@你的域名>`
+- **出站请求约束**：只允许 https，且 host 必须在白名单（`api.resend.com`）内，
+  拒绝 localhost / 环回 / 私有地址
 
 ### 安全设计
 
@@ -180,6 +185,9 @@ email_verifications(email, purpose, code_hash, salt, attempts, expires_at, creat
    npm run db:init:remote
    ```
 
+   **每次改动 `schema.sql` 后都要重跑**（语句是 `CREATE ... IF NOT EXISTS`，可安全重复执行）。
+   只改代码不跑这一步的话，新表不会在线上出现，接口会直接 500。
+
 4. **配置生产密钥**
 
    `JWT_SECRET` 必须换成随机长字符串，且**不要**提交到仓库：
@@ -188,7 +196,8 @@ email_verifications(email, purpose, code_hash, salt, attempts, expires_at, creat
    npx wrangler secret put JWT_SECRET
    ```
 
-   邮件服务需再配置 Resend Key（否则线上会进入 mock 模式，验证码随接口返回，**绝不能带 Key 上生产**）：
+   邮件服务同样必须配置 Resend Key（**不能不带 Key 上生产**，否则 `/api/auth/email-code`
+   会返回 400「邮箱验证服务尚未启用」，验证码无法发送）：
 
    ```bash
    npx wrangler secret put RESEND_API_KEY

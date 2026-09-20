@@ -70,10 +70,9 @@ export function AuthModal() {
     setSending(true)
     setError('')
     try {
-      const res = await api.sendEmailCode(mail, purpose)
+      await api.sendEmailCode(mail, purpose)
       setCooldown(RESEND_SECONDS)
-      if (res.devCode) toast(`【开发模式】验证码：${res.devCode}`, 'info')
-      else toast('验证码已发送，请查收邮箱', 'success')
+      toast('验证码已发送，请查收邮箱', 'success')
     } catch (err) {
       setError(err instanceof Error ? err.message : '验证码发送失败，请重试')
     } finally {

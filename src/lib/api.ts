@@ -35,15 +35,9 @@ const post = <T,>(path: string, body?: unknown) =>
 
 export type EmailCodePurpose = 'register' | 'reset'
 
-export interface EmailCodeResult {
-  ok: boolean
-  /** 仅本地 mock 模式（未配置 RESEND_API_KEY）返回，方便联调 */
-  devCode?: string
-}
-
 export const api = {
   sendEmailCode: (email: string, purpose: EmailCodePurpose) =>
-    post<EmailCodeResult>('/api/auth/email-code', { email, purpose }),
+    post<{ ok: boolean }>('/api/auth/email-code', { email, purpose }),
 
   register: (email: string, username: string, password: string, code: string) =>
     post<{ user: User }>('/api/auth/register', {

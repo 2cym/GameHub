@@ -10,7 +10,7 @@ import {
   verifyToken,
 } from './auth'
 import { HTTPError, badRequest } from './errors'
-import { mailMockMode, sendMail, verificationEmailHtml } from './email'
+import { emailServiceReady, sendMail, verificationEmailHtml } from './email'
 import { issueCode, verifyCode, deleteCode } from './verification'
 
 export interface Env {
@@ -90,6 +90,10 @@ app.post('/api/auth/email-code', async (c) => {
   if (purpose === 'register' && exists) badRequest('该邮箱已被注册，请直接登录')
   if (purpose === 'reset' && !exists) badRequest('该邮箱尚未注册')
 
+  // 配置预检必须在签发验证码之前，否则用户会拿到一个永远收不到邮件的验证码
+  if (!emailServiceReady(c.env))
+    badRequest('邮箱验证服务尚未启用，请稍后再试')
+
   const code = await issueCode(c.env.DB, email, purpose)
   try {
     await sendMail(c.env, email, 'GameHub 验证码', verificationEmailHtml(code, 10))
@@ -99,8 +103,6 @@ app.post('/api/auth/email-code', async (c) => {
     throw err
   }
 
-  // mock 模式（未配置 RESEND_API_KEY）直接返回验证码，方便本地联调；生产配好 Key 后不会携带
-  if (mailMockMode(c.env)) return c.json({ ok: true, devCode: code })
   return c.json({ ok: true })
 })
 
