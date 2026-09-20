@@ -78,6 +78,7 @@ export async function signToken(
 export interface TokenPayload {
   uid: string
   exp: number
+  admin?: boolean
 }
 
 export async function verifyToken(

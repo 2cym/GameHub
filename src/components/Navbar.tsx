@@ -39,6 +39,11 @@ export function Navbar() {
               个人中心
             </NavLink>
           )}
+          {user?.isAdmin && (
+            <NavLink to="/admin" className={styles.navLink}>
+              管理后台
+            </NavLink>
+          )}
         </nav>
 
         <div className={styles.actions}>

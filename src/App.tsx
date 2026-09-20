@@ -4,6 +4,7 @@ import { AuthModal } from './components/AuthModal'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { Navbar } from './components/Navbar'
 import { ToastHost } from './components/ToastHost'
+import { AdminPage } from './pages/AdminPage'
 import { GamePage } from './pages/GamePage'
 import { HomePage } from './pages/Home'
 import { NotFoundPage } from './pages/NotFound'
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/game/:gameId" element={<GamePage />} />
           <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/admin" element={<AdminPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </ErrorBoundary>

@@ -35,6 +35,44 @@ const post = <T,>(path: string, body?: unknown) =>
 
 export type EmailCodePurpose = 'register' | 'reset'
 
+// ---------- 管理员类型 ----------
+
+export interface AdminUserRow {
+  id: string
+  email: string
+  username: string
+  isAdmin: boolean
+  isBanned: boolean
+  createdAt: number
+  scoreCount: number
+  favCount: number
+}
+
+export interface AdminUserDetail extends AdminUserRow {
+  bests: { gameId: string; best: number }[]
+  favorites: string[]
+}
+
+export interface AdminStats {
+  totalUsers: number
+  totalScores: number
+  totalFavorites: number
+  newUsers7d: number
+  gameDistribution: { gameId: string; cnt: number }[]
+  recentRegistrations: { username: string; email: string; createdAt: number; isAdmin: boolean }[]
+}
+
+export interface AdminDebug {
+  db: string
+  jwtSecret: string
+  resendKey: string
+  adminEmail: string
+  mailFrom: string
+  workerVersion: string
+}
+
+// ---------- 用户 API ----------
+
 export const api = {
   sendEmailCode: (email: string, purpose: EmailCodePurpose) =>
     post<{ ok: boolean }>('/api/auth/email-code', { email, purpose }),
@@ -81,4 +119,29 @@ export const api = {
     request<unknown>(`/api/me/favorites/${encodeURIComponent(gameId)}`, {
       method: 'DELETE',
     }),
+}
+
+// ---------- 管理员 API ----------
+
+export const adminApi = {
+  stats: () => request<AdminStats>('/api/admin/stats'),
+
+  users: (search?: string, page = 1, pageSize = 20) =>
+    request<{ users: AdminUserRow[]; total: number }>(
+      `/api/admin/users?search=${encodeURIComponent(search ?? '')}&limit=${pageSize}&offset=${(page - 1) * pageSize}`,
+    ),
+
+  userDetails: (id: string) => request<AdminUserDetail>(`/api/admin/users/${encodeURIComponent(id)}`),
+
+  toggleBan: (id: string) => post<{ isBanned: boolean }>(`/api/admin/users/${encodeURIComponent(id)}/ban`),
+
+  toggleAdmin: (id: string) => post<{ isAdmin: boolean }>(`/api/admin/users/${encodeURIComponent(id)}/admin`),
+
+  resetPassword: (id: string, newPassword: string) =>
+    post<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(id)}/password`, { newPassword }),
+
+  deleteUser: (id: string) =>
+    request<unknown>(`/api/admin/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  debug: () => request<AdminDebug>('/api/admin/debug'),
 }
