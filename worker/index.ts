@@ -242,7 +242,7 @@ app.get('/api/auth/me', async (c) => {
   const payload = token ? await verifyToken(token, c.env.JWT_SECRET) : null
   if (!payload) return c.json({ user: null })
   const user = await loadUser(c.env.DB, payload.uid)
-  return c.json({ user })
+  return c.json({ user: user ? { ...user, isAdmin: user.is_admin } : null })
 })
 
 // ---------- 排行榜（公开） ----------
