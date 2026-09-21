@@ -73,9 +73,16 @@
   bottom: 50%;
 }
 
-/* 星位（简化：九个星位用伪元素标记） */
-.cell:nth-child(1)::before {
-  /* 仅作占位，星位由棋盘背景纹理体现 */
+.starPoint {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 28%;
+  height: 28%;
+  border-radius: 50%;
+  background: rgba(60, 40, 10, 0.7);
+  z-index: 1;
+  pointer-events: none;
 }
 
 .stone {

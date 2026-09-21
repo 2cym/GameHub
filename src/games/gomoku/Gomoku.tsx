@@ -21,6 +21,11 @@ const DIFFS: Array<{ id: Difficulty; label: string; score: number }> = [
   { id: 'hard', label: '困难', score: 1000 },
 ]
 
+const STAR_POINTS = new Set([
+  [3, 3], [7, 7], [11, 3],
+  [3, 11], [11, 11],
+].flatMap(([r, c]) => [r * SIZE + c]))
+
 export default function Gomoku({ onGameOver }: GameProps) {
   const [status, setStatus] = useState<GameStatus>('idle')
   const [board, setBoard] = useState<Board>(() => emptyBoard())
@@ -154,12 +159,14 @@ export default function Gomoku({ onGameOver }: GameProps) {
               const v = board[i]
               const isLast = i === lastMove
               const isWinCell = winLine.includes(i)
+              const isStar = STAR_POINTS.has(i) && v === 0
               return (
                 <div
                   key={i}
                   className={styles.cell}
                   onClick={() => onCellClick(x, y)}
                 >
+                  {isStar && <span className={styles.starPoint} />}
                   {v !== 0 && (
                     <span
                       className={[
