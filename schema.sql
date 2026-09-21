@@ -42,3 +42,12 @@ CREATE TABLE IF NOT EXISTS email_verifications (
   created_at INTEGER NOT NULL DEFAULT (unixepoch()),
   PRIMARY KEY (email, purpose)
 );
+
+-- 页面访问记录（流量监控）
+CREATE TABLE IF NOT EXISTS page_views (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  path       TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE INDEX IF NOT EXISTS idx_pv_created ON page_views(created_at);

@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { adminApi, type AdminDebug, type AdminStats, type AdminUserDetail, type AdminUserRow } from '../lib/api'
+import { adminApi, type AdminAnalytics, type AdminDebug, type AdminStats, type AdminUserDetail, type AdminUserRow } from '../lib/api'
 import { useAuth } from '../stores/auth'
 import { toast } from '../stores/toast'
 import styles from './Admin.module.css'
 
-type Tab = 'dashboard' | 'users' | 'debug'
+type Tab = 'dashboard' | 'users' | 'analytics' | 'debug'
 
 const PAGE_SIZE = 15
 
@@ -31,6 +31,7 @@ export function AdminPage() {
   const [tab, setTab] = useState<Tab>('dashboard')
   const [stats, setStats] = useState<AdminStats | null>(null)
   const [debug, setDebug] = useState<AdminDebug | null>(null)
+  const [analytics, setAnalytics] = useState<AdminAnalytics | null>(null)
   const [users, setUsers] = useState<AdminUserRow[]>([])
   const [userTotal, setUserTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -66,6 +67,7 @@ export function AdminPage() {
           [
             ['dashboard', '系统概览'],
             ['users', '用户管理'],
+            ['analytics', '流量监控'],
             ['debug', 'Debug 诊断'],
           ] as [Tab, string][]
         ).map(([key, label]) => (
@@ -100,6 +102,14 @@ export function AdminPage() {
           onAction={doUserAction}
           onViewDetail={doViewDetail}
           onInitialLoad={() => doFetchUsers(search, page)}
+        />
+      )}
+
+      {tab === 'analytics' && (
+        <AnalyticsTab
+          analytics={analytics}
+          loading={loading}
+          onLoad={() => { setLoading(true); adminApi.analytics().then(setAnalytics).catch(() => toast('加载失败', 'error')).finally(() => setLoading(false)) }}
         />
       )}
 
@@ -558,4 +568,82 @@ function UserDetailDrawer({
       </div>
     </div>
   )
+}
+
+// ---------- Analytics Tab ----------
+
+function AnalyticsTab({
+  analytics,
+  loading,
+  onLoad,
+}: {
+  analytics: AdminAnalytics | null
+  loading: boolean
+  onLoad: () => void
+}) {
+  useEffect(() => { onLoad() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (loading && !analytics) return <div className={styles.loading}><span className={styles.spinner} /> 加载中…</div>
+  if (!analytics) return <div className={styles.loading}>暂无数据</div>
+
+  const maxPath = Math.max(...analytics.pathDistribution.map(p => p.cnt), 1)
+  const maxHourly = Math.max(...analytics.hourlyTraffic.map(h => h.cnt), 1)
+
+  return (
+    <div>
+      <div className={styles.statsGrid}>
+        <div className={`${styles.statCard} ${styles.statCardCyan}`}>
+          <div className={styles.statValue}>{analytics.totalViews.toLocaleString()}</div>
+          <div className={styles.statLabel}>总访问量</div>
+        </div>
+        <div className={`${styles.statCard} ${styles.statCardGreen}`}>
+          <div className={styles.statValue}>{analytics.viewsToday.toLocaleString()}</div>
+          <div className={styles.statLabel}>今日访问</div>
+        </div>
+        <div className={`${styles.statCard} ${styles.statCardGold}`}>
+          <div className={styles.statValue}>{analytics.viewsWeek.toLocaleString()}</div>
+          <div className={styles.statLabel}>近 7 天</div>
+        </div>
+      </div>
+
+      {analytics.pathDistribution.length > 0 && (
+        <div className={styles.section}>
+          <h2 className={styles.sectionTitle}>热门页面（近 24 小时）</h2>
+          <div className={styles.chartWrap}>
+            {analytics.pathDistribution.map(p => (
+              <div key={p.path} className={styles.chartRow}>
+                <span className={styles.chartLabel} title={p.path}>{p.path}</span>
+                <div className={styles.chartBarWrap}>
+                  <div className={styles.chartBar} style={{ width: `${(p.cnt / maxPath) * 100}%` }} />
+                </div>
+                <span className={styles.chartCount}>{p.cnt}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {analytics.hourlyTraffic.length > 0 && (
+        <div className={styles.section}>
+          <h2 className={styles.sectionTitle}>每小时流量（近 7 天）</h2>
+          <div className={styles.chartWrap}>
+            {analytics.hourlyTraffic.slice().reverse().map(h => (
+              <div key={h.hour} className={styles.chartRow}>
+                <span className={styles.chartLabel} title={h.hour}>{fmtDateTimeStr(h.hour)}</span>
+                <div className={styles.chartBarWrap}>
+                  <div className={styles.chartBar} style={{ width: `${(h.cnt / maxHourly) * 100}%`, background: 'linear-gradient(90deg, var(--accent), var(--primary))' }} />
+                </div>
+                <span className={styles.chartCount}>{h.cnt}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function fmtDateTimeStr(iso: string): string {
+  const d = new Date(iso)
+  return `${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')} ${d.getHours().toString().padStart(2, '0')}:00`
 }

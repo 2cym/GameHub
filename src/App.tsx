@@ -10,6 +10,7 @@ import { HomePage } from './pages/Home'
 import { NotFoundPage } from './pages/NotFound'
 import { ProfilePage } from './pages/Profile'
 import { useAuth } from './stores/auth'
+import { api } from './lib/api'
 
 export default function App() {
   const init = useAuth((s) => s.init)
@@ -18,6 +19,10 @@ export default function App() {
   useEffect(() => {
     void init()
   }, [init])
+
+  useEffect(() => {
+    api.trackView(pathname).catch(() => {})
+  }, [pathname])
 
   return (
     <>

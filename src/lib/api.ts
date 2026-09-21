@@ -71,6 +71,14 @@ export interface AdminDebug {
   workerVersion: string
 }
 
+export interface AdminAnalytics {
+  totalViews: number
+  viewsToday: number
+  viewsWeek: number
+  pathDistribution: { path: string; cnt: number }[]
+  hourlyTraffic: { hour: string; cnt: number }[]
+}
+
 // ---------- 用户 API ----------
 
 export const api = {
@@ -119,6 +127,8 @@ export const api = {
     request<unknown>(`/api/me/favorites/${encodeURIComponent(gameId)}`, {
       method: 'DELETE',
     }),
+
+  trackView: (path: string) => post<{ ok: boolean }>('/api/analytics/view', { path }),
 }
 
 // ---------- 管理员 API ----------
@@ -144,4 +154,6 @@ export const adminApi = {
     request<unknown>(`/api/admin/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   debug: () => request<AdminDebug>('/api/admin/debug'),
+
+  analytics: () => request<AdminAnalytics>('/api/admin/analytics'),
 }

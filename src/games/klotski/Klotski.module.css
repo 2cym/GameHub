@@ -1,5 +1,6 @@
 .stagePad {
   padding: 16px;
+  overflow: visible;
 }
 
 .layoutRow {
@@ -13,10 +14,9 @@
 
 /* 4 列 × 5 行；用宽度驱动，纵横比 4:5 */
 .board {
-  --w: min(320px, calc(100vw - 2 * var(--container-pad) - 48px));
   position: relative;
-  width: var(--w);
-  max-width: 100%;
+  width: 100%;
+  max-width: 320px;
   aspect-ratio: 4 / 5;
   margin: 0 auto;
   border-radius: 10px;
@@ -56,8 +56,6 @@
     box-shadow 0.15s ease;
   /* 留出内边距形成格间缝隙 */
   background-clip: padding-box;
-  margin: 2px;
-  width: calc(100% - 4px);
 }
 .piece:active {
   cursor: grabbing;

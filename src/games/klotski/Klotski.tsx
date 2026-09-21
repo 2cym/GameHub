@@ -267,10 +267,10 @@ export default function Klotski({ onGameOver }: GameProps) {
                   .filter(Boolean)
                   .join(' ')}
                 style={{
-                  left: `${p.x * 25}%`,
-                  top: `${p.y * 20}%`,
-                  width: `${p.w * 25}%`,
-                  height: `${p.h * 20}%`,
+                  left: `calc(${p.x * 25}% + 2px)`,
+                  top: `calc(${p.y * 20}% + 2px)`,
+                  width: `calc(${p.w * 25}% - 4px)`,
+                  height: `calc(${p.h * 20}% - 4px)`,
                 }}
                 onPointerDown={(e) => onPointerDown(e, p)}
               >

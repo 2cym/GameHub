@@ -263,6 +263,18 @@ app.get('/api/leaderboard/:gameId', async (c) => {
   return c.json({ entries: results ?? [] })
 })
 
+// ---------- 流量统计（公开） ----------
+
+app.post('/api/analytics/view', async (c) => {
+  const body = await c.req.json().catch(() => null)
+  const path = body && typeof (body as Record<string, unknown>).path === 'string'
+    ? String((body as Record<string, unknown>).path).slice(0, 200)
+    : '/'
+  if (!path.startsWith('/')) badRequest('无效路径')
+  await c.env.DB.prepare('INSERT INTO page_views (path) VALUES (?)').bind(path).run()
+  return c.json({ ok: true })
+})
+
 // ---------- 以下接口需登录 ----------
 
 app.post('/api/scores', requireAuth, async (c) => {
@@ -499,6 +511,40 @@ app.get('/api/admin/debug', requireAuth, requireAdmin, async (c) => {
     adminEmail: c.env.ADMIN_EMAIL ?? 'NOT_SET',
     mailFrom: c.env.MAIL_FROM ?? 'default',
     workerVersion: process.env.WORKER_VERSION ?? 'unknown',
+  })
+})
+
+app.get('/api/admin/analytics', requireAuth, requireAdmin, async (c) => {
+  const db = c.env.DB
+  const now = Math.floor(Date.now() / 1000)
+  const dayAgo = now - 86400
+  const weekAgo = now - 7 * 86400
+
+  const [totalViews, viewsToday, viewsWeek] = await Promise.all([
+    db.prepare('SELECT COUNT(*) AS cnt FROM page_views').first<{ cnt: number }>(),
+    db.prepare('SELECT COUNT(*) AS cnt FROM page_views WHERE created_at >= ?').bind(dayAgo).first<{ cnt: number }>(),
+    db.prepare('SELECT COUNT(*) AS cnt FROM page_views WHERE created_at >= ?').bind(weekAgo).first<{ cnt: number }>(),
+  ])
+
+  const { results: pathDist } = await db.prepare(
+    'SELECT path, COUNT(*) AS cnt FROM page_views WHERE created_at >= ? GROUP BY path ORDER BY cnt DESC LIMIT 20',
+  ).bind(dayAgo).all<{ path: string; cnt: number }>()
+
+  const { results: hourly } = await db.prepare(`
+    SELECT time(created_at, 'unixepoch', '+' || (CAST(strftime('%s', created_at) AS INTEGER) / 3600 * 3600) || ' hours') AS hour,
+           COUNT(*) AS cnt
+    FROM page_views WHERE created_at >= ?
+    GROUP BY CAST(strftime('%s', created_at) AS INTEGER) / 3600
+    ORDER BY hour DESC
+    LIMIT 24`,
+  ).bind(weekAgo).all<{ hour: string; cnt: number }>()
+
+  return c.json({
+    totalViews: totalViews?.cnt ?? 0,
+    viewsToday: viewsToday?.cnt ?? 0,
+    viewsWeek: viewsWeek?.cnt ?? 0,
+    pathDistribution: pathDist ?? [],
+    hourlyTraffic: hourly ?? [],
   })
 })
 
