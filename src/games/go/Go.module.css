@@ -17,15 +17,14 @@
     520px,
     calc(100vw - 2 * var(--container-pad) - 2 * var(--game-pad-x) - 20px)
   );
-  --gap: calc(var(--size) / 19);
   display: grid;
-  grid-template-columns: repeat(19, var(--gap));
-  grid-template-rows: repeat(19, var(--gap));
-  width: max-content;
-  max-width: 100%;
+  grid-template-columns: repeat(19, 1fr);
+  grid-template-rows: repeat(19, 1fr);
+  width: 100%;
+  max-width: var(--size);
   aspect-ratio: 1;
   margin: 0 auto;
-  padding: calc(var(--gap) * 0.5);
+  padding: 8px;
   background: linear-gradient(145deg, #e8c884, #c89854);
   border-radius: 6px;
   box-shadow: var(--shadow);
@@ -34,8 +33,6 @@
 
 .cell {
   position: relative;
-  width: var(--gap);
-  height: var(--gap);
   cursor: pointer;
 }
 .cell::before,
@@ -73,9 +70,16 @@
   bottom: 50%;
 }
 
-/* 星位（简化：九个星位用伪元素标记） */
-.cell:nth-child(1)::before {
-  /* 仅作占位，星位由棋盘背景纹理体现 */
+.starPoint {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 28%;
+  height: 28%;
+  border-radius: 50%;
+  background: rgba(60, 40, 10, 0.7);
+  z-index: 1;
+  pointer-events: none;
 }
 
 .stone {

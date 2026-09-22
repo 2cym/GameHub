@@ -21,6 +21,13 @@ const DIFFS: Array<{ id: Difficulty; label: string; score: number }> = [
   { id: 'hard', label: '困难', score: 1600 },
 ]
 
+const SIZE = 19
+const STAR_POINTS = new Set([
+  [3, 3], [3, 9], [3, 15],
+  [9, 3], [9, 9], [9, 15],
+  [15, 3], [15, 9], [15, 15],
+].flatMap(([r, c]) => [r * SIZE + c]))
+
 export default function Go({ onGameOver }: GameProps) {
   const [status, setStatus] = useState<GameStatus>('idle')
   const [board, setBoard] = useState<Board>(() => emptyBoard())
@@ -219,12 +226,14 @@ export default function Go({ onGameOver }: GameProps) {
             {board.map((v, i) => {
               const isLast = i === lastMove
               const isKo = i === koPoint
+              const isStar = STAR_POINTS.has(i) && v === 0
               return (
                 <div
                   key={i}
                   className={styles.cell}
                   onClick={() => onCellClick(i)}
                 >
+                  {isStar && <span className={styles.starPoint} />}
                   {isKo && <span className={styles.koMark} />}
                   {v !== 0 && (
                     <span
@@ -297,7 +306,7 @@ export default function Go({ onGameOver }: GameProps) {
               </button>
             </div>
           </div>
-          <button type="button" className="btn" onClick={pass} disabled={thinking}>
+          <button type="button" className={styles.chip} onClick={pass} disabled={thinking}>
             ✋ 虚手 (Pass)
           </button>
           <p className={styles.tip}>
