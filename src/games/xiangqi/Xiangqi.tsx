@@ -203,8 +203,6 @@ export default function Xiangqi({ onGameOver }: GameProps) {
       <div className={styles.sideRow}>
         <div className={`${shared.stage} ${styles.stagePad}`}>
           <div className={styles.board}>
-            {/* 楚河汉界 */}
-            <div className={styles.river}>楚 河 　 漢 界</div>
             {board.map((p, i) => {
               const x = i % COLS
               const y = Math.floor(i / COLS)

@@ -434,7 +434,6 @@ export function MatchPage() {
 
       <div className={styles.boardWrap}>
         <div className={styles.board}>
-          <div className={styles.river}>楚 河 　 漢 界</div>
           {board.map((p, i) => {
             const x = i % COLS
             const y = Math.floor(i / COLS)
