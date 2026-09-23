@@ -196,6 +196,9 @@ export const api = {
     }),
 
   trackView: (path: string) => post<{ ok: boolean }>('/api/analytics/view', { path }),
+
+  publicMessages: (limit = 20) =>
+    request<{ messages: MessageRow[] }>(`/api/messages/public?limit=${limit}`),
 }
 
 // ---------- 管理员 API ----------

@@ -564,6 +564,15 @@ app.post('/api/messages', async (c) => {
   return c.json({ ok: true })
 })
 
+// 公开留言列表（任何人可看，首页用）
+app.get('/api/messages/public', async (c) => {
+  const limit = Math.min(Number(c.req.query('limit')) || 20, 50)
+  const { results } = await c.env.DB.prepare(
+    'SELECT id, username, content, created_at AS createdAt FROM messages ORDER BY created_at DESC LIMIT ?',
+  ).bind(limit).all<{ id: number; username: string; content: string; createdAt: number }>()
+  return c.json({ messages: results ?? [] })
+})
+
 app.get('/api/messages', requireAuth, requireAdmin, async (c) => {
   const limit = Math.min(Number(c.req.query('limit')) || 50, 200)
   const offset = Math.max(Number(c.req.query('offset')) || 0, 0)

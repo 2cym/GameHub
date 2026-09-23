@@ -680,7 +680,28 @@ function MessagesTab({
   onLoad: () => void
   onDelete: (id: number) => void
 }) {
+  const [addName, setAddName] = useState('')
+  const [addContent, setAddContent] = useState('')
+  const [addBusy, setAddBusy] = useState(false)
+
   useEffect(() => { onLoad() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const addMessage = async () => {
+    const name = addName.trim()
+    const content = addContent.trim()
+    if (!name || !content) { toast('请填写昵称和留言', 'error'); return }
+    setAddBusy(true)
+    try {
+      await messageApi.create(name, content)
+      setAddContent('')
+      toast('留言已添加', 'success')
+      onLoad()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '添加失败', 'error')
+    } finally {
+      setAddBusy(false)
+    }
+  }
 
   if (loading && messages.length === 0) return <div className={styles.loading}><span className={styles.spinner} /> 加载中…</div>
 
@@ -688,6 +709,15 @@ function MessagesTab({
     <div>
       <div className={styles.section}>
         <h2 className={styles.sectionTitle}>留言板（{messages.length} 条）</h2>
+        <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+          <input className="input" style={{ maxWidth: 160 }} type="text" placeholder="昵称" maxLength={20}
+            value={addName} onChange={(e) => setAddName(e.target.value)} />
+          <input className="input" style={{ flex: 1, minWidth: 200 }} type="text" placeholder="留言内容…" maxLength={500}
+            value={addContent} onChange={(e) => setAddContent(e.target.value)} />
+          <button className="btn btn-primary" disabled={addBusy} onClick={addMessage}>
+            {addBusy ? '添加中…' : '添加留言'}
+          </button>
+        </div>
         {messages.length === 0 ? (
           <div className={styles.loading}>暂无留言</div>
         ) : (
