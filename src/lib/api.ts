@@ -307,8 +307,8 @@ export const fileApi = {
 
   storage: () => request<StorageInfo>('/api/admin/files/storage'),
 
-  upload: (filename: string, base64: string) =>
-    post<{ ok: boolean; fileId: number }>('/api/admin/files', { filename, data: base64 }),
+  upload: (filename: string, base64: string, contentType: string) =>
+    post<{ ok: boolean; fileId: number }>('/api/admin/files', { filename, data: base64, contentType }),
 
   download: async (id: number) => {
     const res = await fetch(`/api/admin/files/${id}`, { credentials: 'same-origin' })

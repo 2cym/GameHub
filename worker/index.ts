@@ -809,19 +809,14 @@ app.get('/api/friends/match-history', requireAuth, async (c) => {
 const STORAGE_LIMIT = 100 * 1024 * 1024 // 100MB
 const CHUNK_RAW_SIZE = 400 * 1024        // 400KB raw per chunk
 
-/** base64 string → ArrayBuffer */
-function base64ToArrayBuffer(b64: string): ArrayBuffer {
-  const bin = atob(b64)
-  const bytes = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-  return bytes.buffer
-}
-
 /** ArrayBuffer → base64 string (for chunk storage) */
 function arrayBufferToBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf)
   let bin = ''
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+  const chunk = 8192
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk) as unknown as number[])
+  }
   return btoa(bin)
 }
 
@@ -836,11 +831,12 @@ app.get('/api/admin/files/storage', requireAuth, requireAdmin, async (c) => {
 app.post('/api/admin/files', requireAuth, requireAdmin, async (c) => {
   const body = await c.req.json().catch(() => null)
   if (!body) badRequest('请求体格式错误')
-  const { filename, data } = (body ?? {}) as Record<string, unknown>
+  const { filename, data, contentType } = (body ?? {}) as Record<string, unknown>
   if (typeof filename !== 'string' || filename.length < 1 || filename.length > 255)
     badRequest('文件名无效')
   if (typeof data !== 'string' || data.length < 1)
     badRequest('文件数据为空')
+  const mimeType = typeof contentType === 'string' && contentType.length > 0 ? contentType : 'application/octet-stream'
 
   // Check storage limit
   const storageRow = await c.env.DB.prepare(
@@ -872,7 +868,7 @@ app.post('/api/admin/files', requireAuth, requireAdmin, async (c) => {
   // Insert file metadata
   const fileResult = await c.env.DB.prepare(
     'INSERT INTO files (filename, content_type, size, total_chunks) VALUES (?, ?, ?, ?)',
-  ).bind(filename, c.req.header('content-type') ?? 'application/octet-stream', fileSize, chunks.length).run()
+  ).bind(filename, mimeType, fileSize, chunks.length).run()
 
   const fileId = Number(fileResult.meta.last_row_id)
 

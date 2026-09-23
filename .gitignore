@@ -5,3 +5,7 @@ dist
 *.local
 .DS_Store
 .mimosa
+push.cjs
+push.js
+push_github.sh
+push_to_github.py

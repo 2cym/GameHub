@@ -789,7 +789,7 @@ function FilesTab() {
         reader.onerror = reject
         reader.readAsDataURL(file)
       })
-      await fileApi.upload(file.name, base64)
+      await fileApi.upload(file.name, base64, file.type || 'application/octet-stream')
       toast('上传成功', 'success')
       loadAll()
     } catch (e) {
