@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { adminApi, type AdminAnalytics, type AdminDebug, type AdminStats, type AdminUserDetail, type AdminUserRow } from '../lib/api'
+import { adminApi, messageApi, type AdminAnalytics, type AdminDebug, type AdminStats, type AdminUserDetail, type AdminUserRow, type MessageRow } from '../lib/api'
 import { useAuth } from '../stores/auth'
 import { toast } from '../stores/toast'
 import styles from './Admin.module.css'
 
-type Tab = 'dashboard' | 'users' | 'analytics' | 'debug'
+type Tab = 'dashboard' | 'users' | 'analytics' | 'debug' | 'messages'
 
 const PAGE_SIZE = 15
 
@@ -32,6 +32,7 @@ export function AdminPage() {
   const [stats, setStats] = useState<AdminStats | null>(null)
   const [debug, setDebug] = useState<AdminDebug | null>(null)
   const [analytics, setAnalytics] = useState<AdminAnalytics | null>(null)
+  const [messages, setMessages] = useState<MessageRow[]>([])
   const [users, setUsers] = useState<AdminUserRow[]>([])
   const [userTotal, setUserTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -68,6 +69,7 @@ export function AdminPage() {
             ['dashboard', '系统概览'],
             ['users', '用户管理'],
             ['analytics', '流量监控'],
+            ['messages', '留言板'],
             ['debug', 'Debug 诊断'],
           ] as [Tab, string][]
         ).map(([key, label]) => (
@@ -110,6 +112,15 @@ export function AdminPage() {
           analytics={analytics}
           loading={loading}
           onLoad={() => { setLoading(true); adminApi.analytics().then(setAnalytics).catch(() => toast('加载失败', 'error')).finally(() => setLoading(false)) }}
+        />
+      )}
+
+      {tab === 'messages' && (
+        <MessagesTab
+          messages={messages}
+          loading={loading}
+          onLoad={() => { setLoading(true); messageApi.list(100, 0).then((r) => setMessages(r.messages)).catch(() => toast('加载失败', 'error')).finally(() => setLoading(false)) }}
+          onDelete={doDeleteMessage}
         />
       )}
 
@@ -190,6 +201,17 @@ export function AdminPage() {
       toast(err instanceof Error ? err.message : '操作失败', 'error')
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function doDeleteMessage(id: number) {
+    if (!confirm('确定删除此留言？')) return
+    try {
+      await messageApi.delete(id)
+      toast('留言已删除', 'success')
+      messageApi.list(100, 0).then((r) => setMessages(r.messages)).catch(() => {})
+    } catch {
+      toast('删除失败', 'error')
     }
   }
 }
@@ -646,4 +668,48 @@ function AnalyticsTab({
 function fmtDateTimeStr(iso: string): string {
   const d = new Date(iso)
   return `${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')} ${d.getHours().toString().padStart(2, '0')}:00`
+}
+
+// ---------- Messages Tab ----------
+
+function MessagesTab({
+  messages, loading, onLoad, onDelete,
+}: {
+  messages: MessageRow[]
+  loading: boolean
+  onLoad: () => void
+  onDelete: (id: number) => void
+}) {
+  useEffect(() => { onLoad() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (loading && messages.length === 0) return <div className={styles.loading}><span className={styles.spinner} /> 加载中…</div>
+
+  return (
+    <div>
+      <div className={styles.section}>
+        <h2 className={styles.sectionTitle}>留言板（{messages.length} 条）</h2>
+        {messages.length === 0 ? (
+          <div className={styles.loading}>暂无留言</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {messages.map((m) => (
+              <div key={m.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: 14, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg, var(--primary), var(--accent))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+                  {m.username[0]?.toUpperCase()}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <strong style={{ fontSize: 14 }}>{m.username}</strong>
+                    <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{fmtDateTime(m.createdAt)}</span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: 'var(--text)' }}>{m.content}</p>
+                </div>
+                <button className={`${styles.actionBtn} ${styles.actionBtnDanger}`} onClick={() => onDelete(m.id)} style={{ flexShrink: 0 }}>删除</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }

@@ -548,6 +548,253 @@ app.get('/api/admin/analytics', requireAuth, requireAdmin, async (c) => {
   })
 })
 
+// ---------- 留言板（公开写入，管理员删除） ----------
+
+app.post('/api/messages', async (c) => {
+  const body = await c.req.json().catch(() => null)
+  if (!body) badRequest('请求体格式错误')
+  const { username, content } = (body ?? {}) as Record<string, unknown>
+  if (typeof username !== 'string' || username.length < 1 || username.length > 20)
+    badRequest('昵称需 1-20 字符')
+  if (typeof content !== 'string' || content.length < 1 || content.length > 500)
+    badRequest('留言需 1-500 字')
+  await c.env.DB.prepare(
+    'INSERT INTO messages (user_id, username, content) VALUES (?, ?, ?)',
+  ).bind('anonymous', username, content).run()
+  return c.json({ ok: true })
+})
+
+app.get('/api/messages', requireAuth, requireAdmin, async (c) => {
+  const limit = Math.min(Number(c.req.query('limit')) || 50, 200)
+  const offset = Math.max(Number(c.req.query('offset')) || 0, 0)
+  const { results, meta } = await c.env.DB.prepare(
+    'SELECT id, username, content, created_at AS createdAt FROM messages ORDER BY created_at DESC LIMIT ? OFFSET ?',
+  ).bind(limit, offset).all<{ id: number; username: string; content: string; createdAt: number }>()
+  return c.json({ messages: results ?? [], total: meta?.changes ?? 0 })
+})
+
+app.delete('/api/messages/:id', requireAuth, requireAdmin, async (c) => {
+  const id = Number(c.req.param('id'))
+  if (!Number.isInteger(id) || id <= 0) badRequest('无效消息 ID')
+  await c.env.DB.prepare('DELETE FROM messages WHERE id = ?').bind(id).run()
+  return c.json({ ok: true })
+})
+
+// ---------- 好友系统 ----------
+
+app.get('/api/friends', requireAuth, async (c) => {
+  const user = c.get('user')
+  const { results } = await c.env.DB.prepare(
+    `SELECT u.id, u.username, u.email, u.is_admin AS isAdmin, u.is_banned AS isBanned
+     FROM friendships f JOIN users u ON u.id = f.friend_id
+     WHERE f.user_id = ? ORDER BY u.username`,
+  ).bind(user.id).all<{ id: string; username: string; email: string; isAdmin: boolean; isBanned: boolean }>()
+  return c.json({ friends: results ?? [] })
+})
+
+app.get('/api/friends/search', requireAuth, async (c) => {
+  const user = c.get('user')
+  const q = (c.req.query('q') ?? '').trim()
+  if (q.length < 1) return c.json({ users: [] })
+  const { results } = await c.env.DB.prepare(
+    `SELECT u.id, u.username, u.is_banned AS isBanned
+     FROM users u
+     WHERE u.id != ? AND (u.username LIKE ? OR u.email LIKE ?)
+     AND u.id NOT IN (SELECT friend_id FROM friendships WHERE user_id = ?)
+     ORDER BY u.username LIMIT 20`,
+  ).bind(user.id, `%${q}%`, `%${q}%`, user.id).all<{ id: string; username: string; isBanned: boolean }>()
+  return c.json({ users: results ?? [] })
+})
+
+app.post('/api/friends/:userId', requireAuth, async (c) => {
+  const user = c.get('user')
+  const targetId = c.req.param('userId')
+  if (targetId === user.id) badRequest('不能添加自己为好友')
+  const target = await c.env.DB.prepare('SELECT id, username FROM users WHERE id = ?').bind(targetId).first()
+  if (!target) badRequest('用户不存在')
+  await c.env.DB.prepare(
+    'INSERT OR IGNORE INTO friendships (user_id, friend_id) VALUES (?, ?)',
+  ).bind(user.id, targetId).run()
+  await c.env.DB.prepare(
+    'INSERT OR IGNORE INTO friendships (user_id, friend_id) VALUES (?, ?)',
+  ).bind(targetId, user.id).run()
+  return c.json({ ok: true })
+})
+
+app.delete('/api/friends/:userId', requireAuth, async (c) => {
+  const user = c.get('user')
+  const targetId = c.req.param('userId')
+  await c.env.DB.prepare(
+    'DELETE FROM friendships WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)',
+  ).bind(user.id, targetId, targetId, user.id).run()
+  return c.json({ ok: true })
+})
+
+// ---------- 好友对局 ----------
+
+const ROOM_GAME_IDS = new Set(['xiangqi', 'chess', 'gomoku', 'go'])
+
+app.post('/api/rooms', requireAuth, async (c) => {
+  const user = c.get('user')
+  const body = await c.req.json().catch(() => null)
+  if (!body) badRequest('请求体格式错误')
+  const { gameId, preferredColor } = (body ?? {}) as Record<string, unknown>
+  if (typeof gameId !== 'string' || !ROOM_GAME_IDS.has(gameId)) badRequest('不支持的对局游戏')
+  const roomId = 'rm_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+  const color = (typeof preferredColor === 'string' && (preferredColor === 'r' || preferredColor === 'b'))
+    ? preferredColor : 'r'
+  await c.env.DB.prepare(
+    `INSERT INTO game_rooms (id, game_id, host_id, host_color, player_color, board_state, current_turn, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting')`,
+  ).bind(roomId, gameId, user.id, color, color === 'r' ? 'b' : 'r', '[]', color).run()
+  return c.json({ roomId })
+})
+
+app.get('/api/rooms', requireAuth, async (c) => {
+  const user = c.get('user')
+  const { results } = await c.env.DB.prepare(
+    `SELECT r.id, r.game_id, r.host_id, r.player_id, r.host_color, r.player_color,
+            r.status, r.created_at AS createdAt,
+            u.username AS hostName
+     FROM game_rooms r LEFT JOIN users u ON u.id = r.host_id
+     WHERE r.host_id = ? OR r.player_id = ?
+     ORDER BY r.created_at DESC LIMIT 20`,
+  ).bind(user.id, user.id).all<{
+    id: string; game_id: string; host_id: string; player_id: string | null
+    host_color: string; player_color: string; status: string; createdAt: number; hostName: string | null
+  }>()
+  return c.json({ rooms: results ?? [] })
+})
+
+app.get('/api/rooms/:id', requireAuth, async (c) => {
+  const user = c.get('user')
+  const roomId = c.req.param('id')
+  const row = await c.env.DB.prepare(
+    `SELECT r.id, r.game_id, r.host_id, r.player_id, r.host_color, r.player_color,
+            r.board_state, r.current_turn, r.last_move, r.status, r.moves_count,
+            r.created_at AS createdAt, r.updated_at AS updatedAt,
+            u1.username AS hostName, u2.username AS playerName
+     FROM game_rooms r
+     LEFT JOIN users u1 ON u1.id = r.host_id
+     LEFT JOIN users u2 ON u2.id = r.player_id
+     WHERE r.id = ?`,
+  ).bind(roomId).first<{
+    id: string; game_id: string; host_id: string; player_id: string | null
+    host_color: string; player_color: string; board_state: string; current_turn: string
+    last_move: string | null; status: string; moves_count: number
+    createdAt: number; updatedAt: number; hostName: string | null; playerName: string | null
+  }>()
+  if (!row) badRequest('对局不存在')
+  if (row.host_id !== user.id && row.player_id !== user.id)
+    throw new HTTPError(403, '无权查看此对局')
+  return c.json(row)
+})
+
+app.post('/api/rooms/:id/join', requireAuth, async (c) => {
+  const user = c.get('user')
+  const roomId = c.req.param('id')
+  const room = await c.env.DB.prepare(
+    'SELECT id, host_id, player_id, host_color, player_color, status FROM game_rooms WHERE id = ?',
+  ).bind(roomId).first()
+  if (!room) badRequest('对局不存在')
+  if (room.status !== 'waiting') badRequest('对局已开始')
+  if (room.host_id === user.id) badRequest('你是房主，无需加入')
+  await c.env.DB.prepare(
+    'UPDATE game_rooms SET player_id = ?, status = ?, updated_at = ? WHERE id = ?',
+  ).bind(user.id, 'playing', Math.floor(Date.now() / 1000), roomId).run()
+  return c.json({ ok: true })
+})
+
+app.post('/api/rooms/:id/move', requireAuth, async (c) => {
+  const user = c.get('user')
+  const roomId = c.req.param('id')
+  const body = await c.req.json().catch(() => null)
+  if (!body) badRequest('请求体格式错误')
+  const { move } = body as Record<string, unknown>
+  if (typeof move !== 'object' || move === null) badRequest('无效走法')
+
+  const room = await c.env.DB.prepare(
+    'SELECT id, host_id, player_id, host_color, player_color, current_turn, status, moves_count, board_state FROM game_rooms WHERE id = ?',
+  ).bind(roomId).first()
+  if (!room) badRequest('对局不存在')
+  if (room.status === 'finished') badRequest('对局已结束')
+  if (room.status === 'waiting') badRequest('对局尚未开始，等待对手加入')
+
+  const userColor = room.host_id === user.id ? room.host_color : room.player_color
+  if (room.current_turn !== userColor) throw new HTTPError(400, '还没轮到你')
+
+  const newMoves = (room.moves_count ?? 0) + 1
+  const now = Math.floor(Date.now() / 1000)
+  const nextTurn = userColor === 'r' ? 'b' : 'r'
+
+  await c.env.DB.prepare(
+    `UPDATE game_rooms SET current_turn = ?, moves_count = ?, last_move = ?, updated_at = ? WHERE id = ?`,
+  ).bind(nextTurn, newMoves, JSON.stringify(move), now, roomId).run()
+
+  return c.json({ ok: true, currentTurn: nextTurn, movesCount: newMoves })
+})
+
+app.post('/api/rooms/:id/resign', requireAuth, async (c) => {
+  const user = c.get('user')
+  const roomId = c.req.param('id')
+  const room = await c.env.DB.prepare(
+    'SELECT id, host_id, player_id, status, game_id FROM game_rooms WHERE id = ?',
+  ).bind(roomId).first()
+  if (!room) badRequest('对局不存在')
+  if (room.status !== 'playing') badRequest('对局不在进行中')
+  if (room.host_id !== user.id && room.player_id !== user.id)
+    throw new HTTPError(403, '非对局参与者')
+
+  const winnerId = room.host_id === user.id ? room.player_id : room.host_id
+  const now = Math.floor(Date.now() / 1000)
+  await c.env.DB.prepare(
+    'UPDATE game_rooms SET status = ?, updated_at = ? WHERE id = ?',
+  ).bind('finished', now, roomId).run()
+  await c.env.DB.prepare(
+    `INSERT INTO game_histories (room_id, game_id, player_id, opponent_id, winner, moves, duration)
+     VALUES (?, ?, ?, ?, ?, 0, ?)`,
+  ).bind(roomId, room.game_id, user.id, winnerId!, 'resign', now - Math.floor(room.created_at)).run()
+
+  return c.json({ ok: true, winner: winnerId })
+})
+
+app.delete('/api/rooms/:id', requireAuth, async (c) => {
+  const user = c.get('user')
+  const roomId = c.req.param('id')
+  const room = await c.env.DB.prepare(
+    'SELECT id, host_id, player_id, status, game_id FROM game_rooms WHERE id = ?',
+  ).bind(roomId).first()
+  if (!room) badRequest('对局不存在')
+  if (room.host_id !== user.id && room.player_id !== user.id)
+    throw new HTTPError(403, '非对局参与者')
+  if (room.status === 'waiting') {
+    await c.env.DB.prepare('DELETE FROM game_rooms WHERE id = ?').bind(roomId).run()
+  } else if (room.status === 'playing') {
+    const winnerId = room.host_id === user.id ? room.player_id : room.host_id
+    const now = Math.floor(Date.now() / 1000)
+    await c.env.DB.prepare('UPDATE game_rooms SET status = ?, updated_at = ? WHERE id = ?').bind('finished', now, roomId).run()
+    await c.env.DB.prepare(
+      `INSERT INTO game_histories (room_id, game_id, player_id, opponent_id, winner, moves, duration)
+       VALUES (?, ?, ?, ?, ?, 0, ?)`,
+    ).bind(roomId, room.game_id, user.id, winnerId!, 'leave', now - Math.floor(room.created_at)).run()
+  }
+  return c.json({ ok: true })
+})
+
+app.get('/api/friends/match-history', requireAuth, async (c) => {
+  const user = c.get('user')
+  const { results } = await c.env.DB.prepare(
+    `SELECT game_id, opponent_id, winner, moves, duration, created_at AS createdAt,
+            u.username AS opponentName
+     FROM game_histories gh JOIN users u ON u.id = gh.opponent_id
+     WHERE gh.player_id = ? ORDER BY created_at DESC LIMIT 50`,
+  ).bind(user.id).all<{
+    game_id: string; opponent_id: string; winner: string | null; moves: number
+    duration: number; createdAt: number; opponentName: string | null
+  }>()
+  return c.json({ history: results ?? [] })
+})
+
 app.notFound((c) => c.json({ error: '接口不存在' }, 404))
 
 export default app

@@ -79,6 +79,73 @@ export interface AdminAnalytics {
   hourlyTraffic: { hour: string; cnt: number }[]
 }
 
+// ---------- 留言板类型 ----------
+
+export interface MessageRow {
+  id: number
+  username: string
+  content: string
+  createdAt: number
+}
+
+// ---------- 好友类型 ----------
+
+export interface FriendUser {
+  id: string
+  username: string
+  email: string
+  isAdmin: boolean
+  isBanned: boolean
+}
+
+export interface SearchResult {
+  id: string
+  username: string
+  isBanned: boolean
+}
+
+// ---------- 对局类型 ----------
+
+export interface GameRoom {
+  id: string
+  game_id: string
+  host_id: string
+  player_id: string | null
+  host_color: string
+  player_color: string
+  board_state: string
+  current_turn: string
+  last_move: string | null
+  status: 'waiting' | 'playing' | 'finished'
+  moves_count: number
+  createdAt: number
+  updatedAt: number
+  hostName: string | null
+  playerName: string | null
+}
+
+export interface RoomSummary {
+  id: string
+  game_id: string
+  host_id: string
+  player_id: string | null
+  host_color: string
+  player_color: string
+  status: string
+  createdAt: number
+  hostName: string | null
+}
+
+export interface MatchHistory {
+  game_id: string
+  opponent_id: string
+  winner: string | null
+  moves: number
+  duration: number
+  createdAt: number
+  opponentName: string | null
+}
+
 // ---------- 用户 API ----------
 
 export const api = {
@@ -156,4 +223,59 @@ export const adminApi = {
   debug: () => request<AdminDebug>('/api/admin/debug'),
 
   analytics: () => request<AdminAnalytics>('/api/admin/analytics'),
+}
+
+// ---------- 留言板 API ----------
+
+export const messageApi = {
+  create: (username: string, content: string) =>
+    post<{ ok: boolean }>('/api/messages', { username, content }),
+
+  list: (limit = 50, offset = 0) =>
+    request<{ messages: MessageRow[]; total: number }>(
+      `/api/messages?limit=${limit}&offset=${offset}`,
+    ),
+
+  delete: (id: number) =>
+    request<unknown>(`/api/messages/${id}`, { method: 'DELETE' }),
+}
+
+// ---------- 好友 API ----------
+
+export const friendApi = {
+  list: () => request<{ friends: FriendUser[] }>('/api/friends'),
+
+  search: (q: string) =>
+    request<{ users: SearchResult[] }>(`/api/friends/search?q=${encodeURIComponent(q)}`),
+
+  add: (userId: string) => post<{ ok: boolean }>(`/api/friends/${encodeURIComponent(userId)}`),
+
+  remove: (userId: string) =>
+    request<unknown>(`/api/friends/${encodeURIComponent(userId)}`, { method: 'DELETE' }),
+
+  matchHistory: () => request<{ history: MatchHistory[] }>('/api/friends/match-history'),
+}
+
+// ---------- 对局 API ----------
+
+export const roomApi = {
+  create: (gameId: string, preferredColor?: string) =>
+    post<{ roomId: string }>('/api/rooms', { gameId, preferredColor }),
+
+  list: () => request<{ rooms: RoomSummary[] }>('/api/rooms'),
+
+  get: (id: string) => request<GameRoom>(`/api/rooms/${encodeURIComponent(id)}`),
+
+  join: (id: string) => post<{ ok: boolean }>(`/api/rooms/${encodeURIComponent(id)}/join`),
+
+  move: (id: string, move: unknown) =>
+    post<{ ok: boolean; currentTurn: string; movesCount: number }>(
+      `/api/rooms/${encodeURIComponent(id)}/move`,
+      { move },
+    ),
+
+  resign: (id: string) => post<{ ok: boolean; winner: string }>(`/api/rooms/${encodeURIComponent(id)}/resign`),
+
+  exit: (id: string) =>
+    request<unknown>(`/api/rooms/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 }

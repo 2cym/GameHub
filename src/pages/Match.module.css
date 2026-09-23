@@ -1,0 +1,435 @@
+.page {
+  padding: 24px 20px 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 900px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.title {
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.roomInfo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.roomCode {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.copyBtn {
+  padding: 4px 10px;
+  background: var(--primary-soft);
+  border: 1px solid var(--primary);
+  border-radius: 6px;
+  color: var(--primary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.copyBtn:hover {
+  background: var(--primary);
+  color: #fff;
+}
+
+.players {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 500px;
+}
+
+.player {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+
+.playerAvatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.playerRed {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+}
+
+.playerBlack {
+  background: linear-gradient(135deg, #333, #111);
+}
+
+.playerName {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.playerColor {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.vs {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.hud {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.hudItem {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.hudLabel {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.hudValue {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.boardWrap {
+  position: relative;
+  width: 100%;
+  max-width: 520px;
+  aspect-ratio: 9 / 10;
+  min-width: 0;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  grid-template-rows: repeat(10, 1fr);
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, #f4d8a0 0%, #e8c87a 50%, #d4a850 100%);
+  border: 2px solid #5a3a1a;
+  border-radius: 8px;
+  position: relative;
+  box-sizing: border-box;
+}
+
+.river {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  transform: translateY(-50%);
+  height: 9%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(10px, 2vw, 14px);
+  letter-spacing: 0.3em;
+  color: rgba(60, 40, 10, 0.5);
+  pointer-events: none;
+}
+
+.cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 棋盘线 - 使用 ::before/::after */
+.cell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(60, 40, 10, 0.35) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(60, 40, 10, 0.35) 1px, transparent 1px);
+  background-position: center center;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+
+.cell:nth-child(9n+1)::before {
+  background-image: linear-gradient(to bottom, rgba(60, 40, 10, 0.35) 1px, transparent 1px);
+}
+
+.cell:nth-child(9n)::before {
+  background-image: linear-gradient(to bottom, rgba(60, 40, 10, 0.35) 1px, transparent 1px);
+}
+
+.cell:nth-child(-n+9)::before {
+  background-image: linear-gradient(to right, rgba(60, 40, 10, 0.35) 1px, transparent 1px);
+}
+
+.cell:nth-child(n+82)::before {
+  background-image: linear-gradient(to right, rgba(60, 40, 10, 0.35) 1px, transparent 1px);
+}
+
+.piece {
+  position: relative;
+  z-index: 2;
+  width: 80%;
+  height: 80%;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(14px, 4.2vw, 22px);
+  font-weight: 700;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  transition: transform 0.1s;
+}
+
+.piece:hover {
+  transform: scale(1.08);
+}
+
+.pieceRed {
+  background: linear-gradient(135deg, #fff5f0, #ffe0d0);
+  color: #c0392b;
+  border: 2px solid #c0392b;
+}
+
+.pieceBlack {
+  background: linear-gradient(135deg, #f0f0f0, #ddd);
+  color: #1a1a1a;
+  border: 2px solid #1a1a1a;
+}
+
+.sel {
+  outline: 2px solid #22c55e;
+  outline-offset: -2px;
+  border-radius: 4px;
+  z-index: 1;
+}
+
+.lastFrom,
+.lastTo {
+  box-shadow: inset 0 0 0 2px rgba(34, 197, 94, 0.5);
+  border-radius: 4px;
+}
+
+.dot {
+  position: absolute;
+  width: 28%;
+  height: 28%;
+  border-radius: 50%;
+  background: rgba(34, 197, 94, 0.5);
+  z-index: 1;
+}
+
+.ring {
+  position: absolute;
+  width: 90%;
+  height: 90%;
+  border-radius: 50%;
+  border: 2px solid rgba(34, 197, 94, 0.6);
+  z-index: 1;
+}
+
+/* 等待/结束状态 */
+.waitingState,
+.finishedState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 48px 24px;
+  text-align: center;
+  max-width: 500px;
+}
+
+.waitingIcon,
+.finishedIcon {
+  font-size: 56px;
+}
+
+.waitingTitle,
+.finishedTitle {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.waitingText,
+.finishedText {
+  font-size: 14px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+
+.roomShareBox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--surface-2);
+  border: 2px dashed var(--border-strong);
+  border-radius: 10px;
+  width: 100%;
+  max-width: 400px;
+}
+
+.roomShareLabel {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.roomShareCode {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent);
+  flex: 1;
+}
+
+.resultBadge {
+  display: inline-block;
+  padding: 8px 24px;
+  border-radius: 999px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.resultWin {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+.resultLose {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.resultDraw {
+  background: rgba(100, 116, 139, 0.15);
+  color: #64748b;
+}
+
+.actionRow {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 60px;
+  color: var(--text-dim);
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 3px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.syncIndicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.syncDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+@media (max-width: 560px) {
+  .page {
+    padding: 16px 12px 40px;
+  }
+  .title {
+    font-size: 20px;
+  }
+  .players {
+    max-width: 100%;
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .playerAvatar {
+    width: 36px;
+    height: 36px;
+    font-size: 16px;
+  }
+  .vs {
+    font-size: 16px;
+  }
+}

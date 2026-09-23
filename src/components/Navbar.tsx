@@ -39,6 +39,14 @@ export function Navbar() {
               个人中心
             </NavLink>
           )}
+          {status === 'authed' && (
+            <NavLink
+              to="/friends"
+              className={styles.navLink}
+            >
+              好友对战
+            </NavLink>
+          )}
           {user?.isAdmin && (
             <NavLink to="/admin" className={styles.navLink}>
               管理后台
