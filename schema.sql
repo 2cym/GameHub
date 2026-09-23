@@ -110,3 +110,21 @@ CREATE TABLE IF NOT EXISTS game_histories (
 );
 
 CREATE INDEX IF NOT EXISTS idx_history_player ON game_histories(player_id);
+
+-- 管理员网盘
+CREATE TABLE IF NOT EXISTS files (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  filename     TEXT NOT NULL,
+  content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+  size         INTEGER NOT NULL,
+  total_chunks INTEGER NOT NULL,
+  created_at   INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE TABLE IF NOT EXISTS file_chunks (
+  file_id     INTEGER NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  data        TEXT NOT NULL,
+  PRIMARY KEY (file_id, chunk_index),
+  FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+);

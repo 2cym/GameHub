@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { adminApi, messageApi, type AdminAnalytics, type AdminDebug, type AdminStats, type AdminUserDetail, type AdminUserRow, type MessageRow } from '../lib/api'
+import { adminApi, fileApi, messageApi, type AdminAnalytics, type AdminDebug, type AdminStats, type AdminUserDetail, type AdminUserRow, type FileRow, type MessageRow, type StorageInfo } from '../lib/api'
 import { useAuth } from '../stores/auth'
 import { toast } from '../stores/toast'
 import styles from './Admin.module.css'
 
-type Tab = 'dashboard' | 'users' | 'analytics' | 'debug' | 'messages'
+type Tab = 'dashboard' | 'users' | 'analytics' | 'debug' | 'messages' | 'files'
 
 const PAGE_SIZE = 15
 
@@ -70,6 +70,7 @@ export function AdminPage() {
             ['users', '用户管理'],
             ['analytics', '流量监控'],
             ['messages', '留言板'],
+            ['files', '网盘'],
             ['debug', 'Debug 诊断'],
           ] as [Tab, string][]
         ).map(([key, label]) => (
@@ -123,6 +124,8 @@ export function AdminPage() {
           onDelete={doDeleteMessage}
         />
       )}
+
+      {tab === 'files' && <FilesTab />}
 
       {tab === 'debug' && (
         <DebugTab
@@ -738,6 +741,163 @@ function MessagesTab({
               </div>
             ))}
           </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ---------- Files Tab (网盘) ----------
+
+function fmtSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+  return `${(bytes / 1024 / 1024).toFixed(2)}MB`
+}
+
+function FilesTab() {
+  const [files, setFiles] = useState<FileRow[]>([])
+  const [storage, setStorage] = useState<StorageInfo>({ used: 0, limit: 104857600, percent: 0 })
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [uploading, setUploading] = useState(false)
+
+  const loadAll = () => {
+    setLoading(true)
+    Promise.all([fileApi.list(), fileApi.storage()])
+      .then(([f, s]) => { setFiles(f.files); setStorage(s) })
+      .catch(() => toast('加载失败', 'error'))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { loadAll() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleUpload = async (file: File) => {
+    if (file.size > 5 * 1024 * 1024) {
+      toast('单个文件不能超过 5MB', 'error')
+      return
+    }
+    if (storage.used + file.size > storage.limit) {
+      toast('存储空间不足', 'error')
+      return
+    }
+    setUploading(true)
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve((reader.result as string).split(',')[1])
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+      await fileApi.upload(file.name, base64)
+      toast('上传成功', 'success')
+      loadAll()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '上传失败', 'error')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleDelete = async (id: number) => {
+    if (!confirm('确定删除此文件？')) return
+    setBusy(true)
+    try {
+      await fileApi.remove(id)
+      toast('已删除', 'success')
+      loadAll()
+    } catch {
+      toast('删除失败', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleDownload = async (id: number) => {
+    try {
+      await fileApi.download(id)
+    } catch {
+      toast('下载失败', 'error')
+    }
+  }
+
+  const onFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) handleUpload(file)
+    e.target.value = ''
+  }
+
+  const usedPct = Math.min(100, (storage.used / storage.limit) * 100)
+  const barColor = usedPct > 90 ? '#ef4444' : usedPct > 70 ? '#f59e0b' : '#22c55e'
+
+  return (
+    <div>
+      <div className={styles.section}>
+        <h2 className={styles.sectionTitle}>存储用量</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 8 }}>
+          <div style={{ flex: 1, height: 20, background: 'var(--surface-2)', borderRadius: 10, overflow: 'hidden' }}>
+            <div style={{ width: `${usedPct}%`, height: '100%', background: barColor, borderRadius: 10, transition: 'width 0.3s' }} />
+          </div>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14, whiteSpace: 'nowrap' }}>
+            {fmtSize(storage.used)} / 100MB ({storage.percent}%)
+          </span>
+        </div>
+      </div>
+
+      <div className={styles.section}>
+        <h2 className={styles.sectionTitle}>上传文件</h2>
+        <label style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          gap: 10, padding: 32, border: '2px dashed var(--border-strong)', borderRadius: 12,
+          cursor: 'pointer', transition: 'border-color 0.15s',
+        }}
+          onDragOver={(e) => { e.preventDefault() }}
+          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleUpload(f) }}
+        >
+          <span style={{ fontSize: 36 }}>📁</span>
+          <span style={{ fontSize: 14, color: 'var(--text-dim)' }}>
+            {uploading ? '上传中…' : '点击或拖拽文件到此处（单个文件最大 5MB）'}
+          </span>
+          <input type="file" style={{ display: 'none' }} onChange={onFileSelect} disabled={uploading} />
+        </label>
+      </div>
+
+      <div className={styles.section}>
+        <h2 className={styles.sectionTitle}>文件列表（{files.length}）</h2>
+        {loading ? (
+          <div className={styles.loading}><span className={styles.spinner} /> 加载中…</div>
+        ) : files.length === 0 ? (
+          <div className={styles.loading}>暂无文件</div>
+        ) : (
+          <table className={styles.userTable}>
+            <thead>
+              <tr>
+                <th>文件名</th>
+                <th>大小</th>
+                <th>分块</th>
+                <th>上传时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {files.map((f) => (
+                <tr key={f.id}>
+                  <td style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.filename}>
+                    📄 {f.filename}
+                  </td>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>{fmtSize(f.size)}</td>
+                  <td>{f.totalChunks}</td>
+                  <td>{fmtDateTime(f.createdAt)}</td>
+                  <td>
+                    <div className={styles.actions}>
+                      <button className={styles.actionBtn} disabled={busy} onClick={() => handleDownload(f.id)}>下载</button>
+                      <button className={`${styles.actionBtn} ${styles.actionBtnDanger}`} disabled={busy} onClick={() => handleDelete(f.id)}>删除</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
     </div>

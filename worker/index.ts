@@ -804,6 +804,151 @@ app.get('/api/friends/match-history', requireAuth, async (c) => {
   return c.json({ history: results ?? [] })
 })
 
+// ---------- 管理员网盘 ----------
+
+const STORAGE_LIMIT = 100 * 1024 * 1024 // 100MB
+const CHUNK_RAW_SIZE = 400 * 1024        // 400KB raw per chunk
+
+/** base64 string → ArrayBuffer */
+function base64ToArrayBuffer(b64: string): ArrayBuffer {
+  const bin = atob(b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  return bytes.buffer
+}
+
+/** ArrayBuffer → base64 string (for chunk storage) */
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf)
+  let bin = ''
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+  return btoa(bin)
+}
+
+app.get('/api/admin/files/storage', requireAuth, requireAdmin, async (c) => {
+  const row = await c.env.DB.prepare(
+    'SELECT COALESCE(SUM(size), 0) AS used FROM files',
+  ).first<{ used: number }>()
+  const used = row?.used ?? 0
+  return c.json({ used, limit: STORAGE_LIMIT, percent: Math.round((used / STORAGE_LIMIT) * 10000) / 100 })
+})
+
+app.post('/api/admin/files', requireAuth, requireAdmin, async (c) => {
+  const body = await c.req.json().catch(() => null)
+  if (!body) badRequest('请求体格式错误')
+  const { filename, data } = (body ?? {}) as Record<string, unknown>
+  if (typeof filename !== 'string' || filename.length < 1 || filename.length > 255)
+    badRequest('文件名无效')
+  if (typeof data !== 'string' || data.length < 1)
+    badRequest('文件数据为空')
+
+  // Check storage limit
+  const storageRow = await c.env.DB.prepare(
+    'SELECT COALESCE(SUM(size), 0) AS used FROM files',
+  ).first<{ used: number }>()
+  const used = storageRow?.used ?? 0
+
+  // Decode base64 to get raw size
+  let rawBytes: Uint8Array
+  try {
+    const bin = atob(data)
+    rawBytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) rawBytes[i] = bin.charCodeAt(i)
+  } catch {
+    badRequest('base64 数据无效')
+  }
+
+  const fileSize = rawBytes.length
+  if (fileSize > 5 * 1024 * 1024) badRequest('单个文件不能超过 5MB')
+  if (used + fileSize > STORAGE_LIMIT) badRequest(`存储空间不足，已用 ${used}B，上限 ${STORAGE_LIMIT}B`)
+
+  // Split into chunks
+  const chunks: string[] = []
+  for (let offset = 0; offset < fileSize; offset += CHUNK_RAW_SIZE) {
+    const slice = rawBytes.subarray(offset, Math.min(offset + CHUNK_RAW_SIZE, fileSize))
+    chunks.push(arrayBufferToBase64(slice.buffer.slice(slice.byteOffset, slice.byteOffset + slice.byteLength)))
+  }
+
+  // Insert file metadata
+  const fileResult = await c.env.DB.prepare(
+    'INSERT INTO files (filename, content_type, size, total_chunks) VALUES (?, ?, ?, ?)',
+  ).bind(filename, c.req.header('content-type') ?? 'application/octet-stream', fileSize, chunks.length).run()
+
+  const fileId = Number(fileResult.meta.last_row_id)
+
+  // Insert chunks in parallel
+  const chunkInserts = chunks.map((data, i) =>
+    c.env.DB.prepare(
+      'INSERT INTO file_chunks (file_id, chunk_index, data) VALUES (?, ?, ?)',
+    ).bind(fileId, i, data).run(),
+  )
+  await Promise.all(chunkInserts)
+
+  return c.json({ ok: true, fileId, size: fileSize, chunks: chunks.length })
+})
+
+app.get('/api/admin/files', requireAuth, requireAdmin, async (c) => {
+  const limit = Math.min(Number(c.req.query('limit')) || 100, 500)
+  const { results } = await c.env.DB.prepare(
+    'SELECT id, filename, content_type AS contentType, size, total_chunks AS totalChunks, created_at AS createdAt FROM files ORDER BY created_at DESC LIMIT ?',
+  ).bind(limit).all<{
+    id: number; filename: string; contentType: string; size: number
+    totalChunks: number; createdAt: number
+  }>()
+  return c.json({ files: results ?? [] })
+})
+
+app.get('/api/admin/files/:id', requireAuth, requireAdmin, async (c) => {
+  const id = Number(c.req.param('id'))
+  if (!Number.isInteger(id) || id <= 0) badRequest('无效文件 ID')
+
+  const file = await c.env.DB.prepare(
+    'SELECT id, filename, content_type AS contentType, size, total_chunks AS totalChunks FROM files WHERE id = ?',
+  ).bind(id).first<{ id: number; filename: string; contentType: string; size: number; totalChunks: number }>()
+  if (!file) throw new HTTPError(404, '文件不存在')
+
+  // Fetch all chunks
+  const { results } = await c.env.DB.prepare(
+    'SELECT data FROM file_chunks WHERE file_id = ? ORDER BY chunk_index',
+  ).bind(id).all<{ data: string }>()
+
+  if (!results || results.length !== file.totalChunks) throw new HTTPError(500, '文件数据不完整')
+
+  // Reassemble
+  const parts: Uint8Array[] = []
+  for (const chunk of results) {
+    const bin = atob(chunk.data)
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+    parts.push(bytes)
+  }
+
+  const totalLen = parts.reduce((s, p) => s + p.length, 0)
+  const buf = new Uint8Array(totalLen)
+  let off = 0
+  for (const part of parts) {
+    buf.set(part, off)
+    off += part.length
+  }
+
+  return new Response(buf.buffer, {
+    headers: {
+      'Content-Type': file.contentType,
+      'Content-Disposition': `attachment; filename="${encodeURIComponent(file.filename)}"`,
+      'Content-Length': String(totalLen),
+      'Cache-Control': 'private, max-age=300',
+    },
+  })
+})
+
+app.delete('/api/admin/files/:id', requireAuth, requireAdmin, async (c) => {
+  const id = Number(c.req.param('id'))
+  if (!Number.isInteger(id) || id <= 0) badRequest('无效文件 ID')
+  await c.env.DB.prepare('DELETE FROM files WHERE id = ?').bind(id).run()
+  // chunks are cascade-deleted
+  return c.json({ ok: true })
+})
+
 app.notFound((c) => c.json({ error: '接口不存在' }, 404))
 
 export default app

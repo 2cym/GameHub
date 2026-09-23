@@ -146,6 +146,23 @@ export interface MatchHistory {
   opponentName: string | null
 }
 
+// ---------- 网盘类型 ----------
+
+export interface FileRow {
+  id: number
+  filename: string
+  contentType: string
+  size: number
+  totalChunks: number
+  createdAt: number
+}
+
+export interface StorageInfo {
+  used: number
+  limit: number
+  percent: number
+}
+
 // ---------- 用户 API ----------
 
 export const api = {
@@ -281,4 +298,32 @@ export const roomApi = {
 
   exit: (id: string) =>
     request<unknown>(`/api/rooms/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+}
+
+// ---------- 网盘 API ----------
+
+export const fileApi = {
+  list: () => request<{ files: FileRow[] }>('/api/admin/files'),
+
+  storage: () => request<StorageInfo>('/api/admin/files/storage'),
+
+  upload: (filename: string, base64: string) =>
+    post<{ ok: boolean; fileId: number }>('/api/admin/files', { filename, data: base64 }),
+
+  download: async (id: number) => {
+    const res = await fetch(`/api/admin/files/${id}`, { credentials: 'same-origin' })
+    if (!res.ok) throw new ApiError('下载失败', res.status)
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = res.headers.get('Content-Disposition')?.match(/filename="(.+?)"/)?.[1]?.replace(/%20/g, ' ') ?? `file_${id}`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  },
+
+  remove: (id: number) =>
+    request<unknown>(`/api/admin/files/${id}`, { method: 'DELETE' }),
 }
