@@ -327,3 +327,29 @@ export const fileApi = {
   remove: (id: number) =>
     request<unknown>(`/api/admin/files/${id}`, { method: 'DELETE' }),
 }
+
+// ---------- 棋类 AI API ----------
+
+/** 支持 Cloudflare Workers AI 的棋种 */
+export type AiGame = 'chess' | 'gomoku' | 'go' | 'xiangqi'
+export type AiLevel = 'medium' | 'hard'
+
+export interface AiMoveResponse {
+  ok: boolean
+  /** cf = Workers AI 给出了合法候选；local = 已回落本地 AI */
+  engine: 'cf' | 'local'
+  /** LLM 返回的候选走法文本（已通过服务端合法性过滤，按优劣排序） */
+  candidates: string[]
+  model: string
+  aiUsedToday: number
+  aiLimit: number
+}
+
+/**
+ * 请求 AI 候选走法。
+ * legalMoves 由客户端用本地规则算好后传入，服务端只负责喂给 LLM 并过滤非法输出。
+ */
+export const aiApi = {
+  move: (game: AiGame, level: AiLevel, legalMoves: string[], side: string) =>
+    post<AiMoveResponse>('/api/ai/move', { game, level, legalMoves, side }),
+}

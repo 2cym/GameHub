@@ -13,12 +13,31 @@ import { HTTPError, badRequest } from './errors'
 import { emailServiceReady, sendMail, verificationEmailHtml } from './email'
 import { issueCode, verifyCode, deleteCode } from './verification'
 
+/**
+ * Cloudflare Workers AI 的最小类型声明。
+ * @cloudflare/workers-types 未包含 Workers AI 的 run() 接口，这里只声明实际用到的部分。
+ */
+interface WorkersAI {
+  run(
+    model: string,
+    body: unknown,
+    init?: {
+      temperature?: number
+      max_tokens?: number
+      stream?: boolean
+      abortSignal?: AbortSignal
+    },
+  ): Promise<unknown>
+}
+
 export interface Env {
   DB: D1Database
   JWT_SECRET: string
   RESEND_API_KEY?: string
   MAIL_FROM?: string
   ADMIN_EMAIL?: string
+  /** Workers AI 内建 subrequest；账号未开通 Workers AI 时为 undefined */
+  AI?: WorkersAI
 }
 
 interface AuthUser {
@@ -52,6 +71,29 @@ const GAME_IDS = new Set([
   'go',
   'contra',
 ])
+
+// ---------- 棋类 AI（Cloudflare Workers AI） ----------
+
+/** 每账号每日 AI 步数上限，超限自动回落本地 AI */
+const AI_DAILY_LIMIT = 300
+/** 走法候选上限，防止超大请求 */
+const AI_MAX_LEGAL_MOVES = 400
+/** 候选数量：中等取 3，困难取 6 */
+const AI_CANDIDATES: Record<'medium' | 'hard', number> = { medium: 3, hard: 6 }
+/** temperature：困难更低以保证确定性 */
+const AI_TEMPERATURE: Record<'medium' | 'hard', number> = { medium: 0.7, hard: 0.4 }
+const AI_GAMES = new Set(['chess', 'gomoku', 'go', 'xiangqi'])
+const AI_TIMEOUT_MS = 20000
+/** 换模型只需改这里 */
+const AI_MODEL = '@cf-workers/arena-llm/llama-3-1-70b'
+
+type AiGameName = '国际象棋' | '五子棋' | '围棋' | '中国象棋'
+const AI_GAME_LABEL: Record<string, AiGameName> = {
+  chess: '国际象棋',
+  gomoku: '五子棋',
+  go: '围棋',
+  xiangqi: '中国象棋',
+}
 
 async function loadUser(db: D1Database, id: string): Promise<AuthUser | null> {
   const row = await db
@@ -510,6 +552,9 @@ app.get('/api/admin/debug', requireAuth, requireAdmin, async (c) => {
     resendKey: Boolean(c.env.RESEND_API_KEY) ? 'configured' : 'NOT_SET',
     adminEmail: c.env.ADMIN_EMAIL ?? 'NOT_SET',
     mailFrom: c.env.MAIL_FROM ?? 'default',
+    workersAi: c.env.AI ? 'available' : 'NOT_ENABLED',
+    aiModel: AI_MODEL,
+    aiDailyLimit: AI_DAILY_LIMIT,
     workerVersion: process.env.WORKER_VERSION ?? 'unknown',
   })
 })
@@ -802,6 +847,130 @@ app.get('/api/friends/match-history', requireAuth, async (c) => {
     duration: number; createdAt: number; opponentName: string | null
   }>()
   return c.json({ history: results ?? [] })
+})
+
+// ---------- 棋类 AI 走法建议 ----------
+
+/** 从 LLM 原始输出里抽出候选走法字符串数组（容忍 ```json 围栏与前后杂文） */
+function parseAiCandidates(raw: string, legal: Set<string>, want: number): string[] {
+  let text = raw.trim()
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/)
+  if (fence) text = fence[1].trim()
+  const start = text.indexOf('[')
+  const end = text.lastIndexOf(']')
+  if (start === -1 || end === -1 || end <= start) return []
+  try {
+    const arr = JSON.parse(text.slice(start, end + 1))
+    if (!Array.isArray(arr)) return []
+    const out: string[] = []
+    for (const v of arr) {
+      if (typeof v !== 'string') continue
+      const t = v.trim()
+      if (!legal.has(t) || out.includes(t)) continue
+      out.push(t)
+      if (out.length >= want) break
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+/** 读当日已用 AI 步数（只读，不计数） */
+async function readAiUsage(db: D1Database, userId: string): Promise<number> {
+  const today = new Date().toISOString().slice(0, 10)
+  const row = await db
+    .prepare('SELECT used FROM ai_usage WHERE user_id = ? AND date = ?')
+    .bind(userId, today)
+    .first<{ used: number }>()
+  return row?.used ?? 0
+}
+
+/** 成功调用一次 Workers AI 后 +1 */
+async function incAiUsage(db: D1Database, userId: string): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10)
+  await db
+    .prepare(
+      `INSERT INTO ai_usage (user_id, date, used) VALUES (?, ?, 1)
+       ON CONFLICT(user_id, date) DO UPDATE SET used = used + 1`,
+    )
+    .bind(userId, today)
+    .run()
+}
+
+app.post('/api/ai/move', requireAuth, async (c) => {
+  const user = c.get('user')
+  const body = await c.req.json().catch(() => null)
+  if (!body) badRequest('请求体格式错误')
+  const { game, level, legalMoves, side } = body as Record<string, unknown>
+
+  if (typeof game !== 'string' || !AI_GAMES.has(game)) badRequest('无效棋种')
+  if (level !== 'medium' && level !== 'hard') badRequest('仅支持 medium / hard')
+  if (!Array.isArray(legalMoves) || legalMoves.length === 0) badRequest('没有可用走法')
+  if (legalMoves.length > AI_MAX_LEGAL_MOVES) badRequest('走法数量过多')
+  const legal = legalMoves.filter((v): v is string => typeof v === 'string')
+  if (legal.length === 0) badRequest('没有可用走法')
+  if (typeof side !== 'string' || side.length > 8) badRequest('无效走方')
+
+  const want = AI_CANDIDATES[level]
+  const limit = AI_DAILY_LIMIT
+  const legalSet = new Set(legal)
+
+  const reply = (engine: 'cf' | 'local', candidates: string[], used: number): Response =>
+    c.json({ ok: true, engine, candidates, model: AI_MODEL, aiUsedToday: used, aiLimit: limit })
+
+  const ai = c.env.AI
+  const used = await readAiUsage(c.env.DB, user.id)
+
+  if (!ai) {
+    // Workers AI 未开通：回落，不计费
+    return reply('local', [], used)
+  }
+  if (used >= limit) {
+    // 当日额度用尽：回落本地 AI
+    return reply('local', [], used)
+  }
+
+  const show = legal.slice(0, AI_MAX_LEGAL_MOVES)
+  const prompt =
+    `你是${AI_GAME_LABEL[game]}特级大师引擎。下面是当前局面的全部合法走法，请选出最值得考虑的 ${want} 步，` +
+    `按优劣排序，最优选在前。\n\n` +
+    `合法走法清单（只能从这里原样挑选，不得新增、不得改写）：\n${show.join('\n')}\n\n` +
+    `要求：只输出一个 JSON 数组，元素为走法字符串，数量 ${want}，无多余文字。例如 ["e2e4"]`
+
+  let raw = ''
+  try {
+    const res = await ai.run(
+      AI_MODEL,
+      { messages: [{ role: 'user', content: prompt }] },
+      {
+        temperature: AI_TEMPERATURE[level],
+        max_tokens: 256,
+        stream: false,
+        abortSignal: AbortSignal.timeout(AI_TIMEOUT_MS),
+      },
+    )
+    // Workers AI 返回 { response: '...' } 对象；个别模型直接返回字符串
+    if (typeof res === 'string') {
+      raw = res
+    } else if (res && typeof res === 'object' && typeof (res as { response?: unknown }).response === 'string') {
+      raw = (res as { response: string }).response
+    } else {
+      raw = JSON.stringify(res)
+    }
+  } catch (err) {
+    // LLM 调用失败（含超时）：回落本地，本次不计费
+    console.warn('ai.run failed:', err)
+    return reply('local', [], used)
+  }
+
+  const candidates = parseAiCandidates(raw, legalSet, want)
+  if (candidates.length === 0) {
+    // 输出里没有一个合法候选：回落本地，本次不计费
+    return reply('local', [], used)
+  }
+  await incAiUsage(c.env.DB, user.id)
+  return reply('cf', candidates, used + 1)
 })
 
 // ---------- 管理员网盘 ----------

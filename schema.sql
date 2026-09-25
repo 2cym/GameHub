@@ -128,3 +128,11 @@ CREATE TABLE IF NOT EXISTS file_chunks (
   PRIMARY KEY (file_id, chunk_index),
   FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
 );
+
+-- 棋类 AI 用量（Cloudflare Workers AI 每日额度计数）
+CREATE TABLE IF NOT EXISTS ai_usage (
+  user_id TEXT NOT NULL,
+  date    TEXT NOT NULL,
+  used    INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, date)
+);

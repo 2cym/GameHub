@@ -199,3 +199,36 @@ export function aiMove(board: Board, ai: Stone, difficulty: Difficulty): [number
   }
   return best
 }
+
+// ===== 走法文本序列化（供 Workers AI 候选交换） =====
+
+/** [x, y] → "x,y" */
+export function moveToText(m: [number, number]): string {
+  return `${m[0]},${m[1]}`
+}
+
+/**
+ * 在给定候选集合内按"进攻 + 防守"评分选最优（Workers AI 粗筛后本地精筛）。
+ * 与 aiMove 同一套评分，候选为空返回 null。
+ */
+export function bestOf(
+  board: Board,
+  ai: Stone,
+  candidates: Array<[number, number]>,
+): [number, number] | null {
+  if (candidates.length === 0) return null
+  const opp = (ai === 1 ? 2 : 1) as Stone
+  let best: [number, number] | null = null
+  let bestScore = -Infinity
+  for (const [x, y] of candidates) {
+    if (board[idx(x, y)] !== 0) continue
+    const atk = evalPoint(board, x, y, ai)
+    const def = evalPoint(board, x, y, opp)
+    const s = atk + def
+    if (s > bestScore) {
+      bestScore = s
+      best = [x, y]
+    }
+  }
+  return best
+}

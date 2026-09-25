@@ -396,6 +396,41 @@ export function aiMove(
   return best[Math.floor(Math.random() * best.length)]
 }
 
+// ===== 走法文本序列化（供 Workers AI 候选交换） =====
+
+/** Move → "从格-到格"，如 30-39 */
+export function moveToText(m: Move): string {
+  return `${m.from}-${m.to}`
+}
+
+/**
+ * 在给定候选集合内做 α-β 搜索选最优（Workers AI 粗筛后本地精筛）。
+ * 候选为空返回 null。
+ */
+export function bestOf(
+  board: Board,
+  side: Side,
+  candidates: Move[],
+  depth: number,
+): Move | null {
+  if (candidates.length === 0) return null
+  const opp: Side = side === 'r' ? 'b' : 'r'
+  const moves = candidates.slice().sort((a, b) => moveScore(board, b) - moveScore(board, a))
+  let bestScore = -Infinity
+  let best: Move[] = []
+  for (const m of moves) {
+    const nb = applyMove(board, m)
+    const score = -negamax(nb, opp, depth - 1, -Infinity, Infinity)
+    if (score > bestScore) {
+      bestScore = score
+      best = [m]
+    } else if (score === bestScore) {
+      best.push(m)
+    }
+  }
+  return best[Math.floor(Math.random() * best.length)]
+}
+
 /** 走法合法性（供 UI 高亮用）。 */
 export function legalTargets(board: Board, from: number, side: Side): number[] {
   const piece = board[from]

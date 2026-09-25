@@ -1,12 +1,16 @@
 import { useCallback, useRef, useState } from 'react'
 import type { GameProps, GameStatus } from '../../lib/types'
 import { GameOverlay } from '../shared/GameOverlay'
+import { aiEngineMove } from '../shared/aiEngine'
 import { toast } from '../../stores/toast'
 import shared from '../shared/game.module.css'
 import styles from './Go.module.css'
 import {
   aiMove,
+  bestOf,
+  candidates,
   emptyBoard,
+  moveToText,
   scoreBoard,
   tryMove,
   type Board,
@@ -57,7 +61,8 @@ export default function Go({ onGameOver }: GameProps) {
   passesRef.current = passes
   const gameOverRef = useRef(onGameOver)
   gameOverRef.current = onGameOver
-  const aiTimer = useRef<number | null>(null)
+  /** AI 回合序号：每次发起 +1，旧回合的异步结果到达时直接丢弃 */
+  const aiRunId = useRef(0)
 
   const ai: Stone = playerColor === 1 ? 2 : 1
 
@@ -108,34 +113,47 @@ export default function Go({ onGameOver }: GameProps) {
     [],
   )
 
-  const doAIMove = useCallback(() => {
+  const doAIMove = useCallback(async () => {
+    if (statusRef.current !== 'running') return
+    const runId = ++aiRunId.current
     setThinking(true)
-    const timer = window.setTimeout(() => {
-      // AI 判断是否虚手（无合理走法或优势足够则 pass）
-      const mv = aiMove(boardRef.current, ai, koRef.current, diffRef.current)
-      if (mv === null) {
-        // AI pass
-        setPasses((p) => {
-          const np = p + 1
-          passesRef.current = np
-          if (np >= 2) finalize()
-          else toast('AI 虚手', 'info')
-          return np
-        })
-        setCurrent(playerRef.current)
-        currentRef.current = playerRef.current
-      } else {
-        place(mv, ai)
-      }
-      setThinking(false)
-    }, 400)
-    aiTimer.current = timer
+    // 全部合法落子点（排除劫点），供 Workers AI 从中挑选
+    const b = boardRef.current
+    const ko = koRef.current
+    const legal = candidates(b)
+      .filter((i) => b[i] === 0 && !tryMove(b, i, ai, ko).illegal)
+      .map((i) => ({ text: moveToText(i), move: i }))
+    const { move } = await aiEngineMove<number>({
+      game: 'go',
+      level: diffRef.current,
+      legal,
+      side: String(ai),
+      search: (pool) => bestOf(b, ai, ko, pool),
+      local: () => aiMove(b, ai, ko, diffRef.current),
+    })
+    if (runId !== aiRunId.current || statusRef.current !== 'running') return
+    if (move === null) {
+      // AI 虚手（无合理走法或优势足够则 pass）
+      setPasses((p) => {
+        const np = p + 1
+        passesRef.current = np
+        if (np >= 2) finalize()
+        else toast('AI 虚手', 'info')
+        return np
+      })
+      setCurrent(playerRef.current)
+      currentRef.current = playerRef.current
+    } else {
+      place(move, ai)
+    }
+    setThinking(false)
   }, [ai, place, finalize])
 
   const start = useCallback(() => {
-    if (aiTimer.current) window.clearTimeout(aiTimer.current)
-    setBoard(emptyBoard())
-    boardRef.current = emptyBoard()
+    aiRunId.current++
+    const b = emptyBoard()
+    setBoard(b)
+    boardRef.current = b
     setCurrent(1)
     currentRef.current = 1
     setLastMove(-1)
@@ -147,15 +165,8 @@ export default function Go({ onGameOver }: GameProps) {
     setScore(0)
     setThinking(false)
     setStatus('running')
-    if (playerRef.current === 2) {
-      setThinking(true)
-      aiTimer.current = window.setTimeout(() => {
-        const mv = aiMove(emptyBoard(), ai, null, diffRef.current)
-        if (mv !== null) place(mv, ai)
-        setThinking(false)
-      }, 400)
-    }
-  }, [ai, place])
+    if (playerRef.current === 2) void doAIMove()
+  }, [doAIMove])
 
   const onCellClick = useCallback(
     (i: number) => {
@@ -213,9 +224,22 @@ export default function Go({ onGameOver }: GameProps) {
             {Math.round(black)}:{Math.round(white)}
           </span>
         </div>
+        <div className={shared.hudItem}>
+          <span className={shared.hudLabel}>AI</span>
+          <span className={shared.hudValue}>
+            {DIFFS.find((d) => d.id === difficulty)?.label}
+            {difficulty !== 'easy' && (
+              <span className={shared.aiTag} title="由 Cloudflare Workers AI 生成候选">
+                · CF
+              </span>
+            )}
+          </span>
+        </div>
         {thinking && (
           <div className={shared.hudItem}>
-            <span className={shared.hudValue}>思考中…</span>
+            <span className={`${shared.hudValue} ${shared.thinking}`}>
+              {difficulty === 'easy' ? '思考中…' : 'AI 思考中…'}
+            </span>
           </div>
         )}
       </div>
@@ -311,6 +335,7 @@ export default function Go({ onGameOver }: GameProps) {
           </button>
           <p className={styles.tip}>
             落子围地提子。连续两次虚手即终局数目。黑贴白 6.5 目。
+            中等/困难由 Cloudflare AI 生成候选（需登录，失败自动回落本地）。
           </p>
         </div>
       </div>

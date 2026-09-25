@@ -173,7 +173,7 @@ export function candidates(board: Board): number[] {
   return Array.from(set)
 }
 
-function evalMove(board: Board, i: number, color: Stone): number {
+export function evalMove(board: Board, i: number, color: Stone): number {
   const opp: Stone = color === 1 ? 2 : 1
   const result = tryMove(board, i, color, null)
   if (result.illegal) return -1
@@ -224,6 +224,40 @@ export function aiMove(
     .filter((x) => x.s >= best - 1)
     .map((x) => x.i)
   return top[Math.floor(Math.random() * top.length)]
+}
+
+// ===== 走法文本序列化（供 Workers AI 候选交换） =====
+
+/** 落子点 → 棋盘线性下标文本，如 "260" */
+export function moveToText(i: number): string {
+  return String(i)
+}
+
+
+/**
+ * 在给定候选集合内按现有评分选最优（Workers AI 粗筛后本地精筛）。
+ * 遵守打劫禁复；候选为空返回 null（等价于该方只能虚手）。
+ */
+export function bestOf(
+  board: Board,
+  color: Stone,
+  koPoint: number | null,
+  candidates: number[],
+): number | null {
+  let best: number | null = null
+  let bestScore = -Infinity
+  for (const i of candidates) {
+    if (i === koPoint) continue
+    if (board[i] !== 0) continue
+    const r = tryMove(board, i, color, koPoint)
+    if (r.illegal) continue
+    const s = evalMove(board, i, color)
+    if (s > bestScore) {
+      bestScore = s
+      best = i
+    }
+  }
+  return best
 }
 
 export { idx }

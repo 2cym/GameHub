@@ -1,14 +1,18 @@
 import { useCallback, useRef, useState } from 'react'
 import type { GameProps, GameStatus } from '../../lib/types'
 import { GameOverlay } from '../shared/GameOverlay'
+import { aiEngineMove } from '../shared/aiEngine'
 import shared from '../shared/game.module.css'
 import styles from './Gomoku.module.css'
 import {
   aiMove,
+  bestOf,
+  candidates,
   emptyBoard,
   idx,
   isFull,
   isWin,
+  moveToText,
   SIZE,
   type Board,
   type Difficulty,
@@ -36,6 +40,7 @@ export default function Gomoku({ onGameOver }: GameProps) {
   const [playerColor, setPlayerColor] = useState<Stone>(1) // 玩家黑或白
   const [over, setOver] = useState<'win' | 'lose' | 'draw' | null>(null)
   const [score, setScore] = useState(0)
+  const [thinking, setThinking] = useState(false)
 
   const statusRef = useRef(status)
   statusRef.current = status
@@ -49,7 +54,8 @@ export default function Gomoku({ onGameOver }: GameProps) {
   diffRef.current = difficulty
   const gameOverRef = useRef(onGameOver)
   gameOverRef.current = onGameOver
-  const aiTimer = useRef<number | null>(null)
+  /** AI 回合序号：每次发起 +1，旧回合的异步结果到达时直接丢弃 */
+  const aiRunId = useRef(0)
 
   const ai: Stone = playerColor === 1 ? 2 : 1
 
@@ -87,43 +93,50 @@ export default function Gomoku({ onGameOver }: GameProps) {
     [],
   )
 
-  const doAIMove = useCallback(() => {
+  const doAIMove = useCallback(async () => {
     if (statusRef.current !== 'running') return
-    const timer = window.setTimeout(() => {
-      const mv = aiMove(boardRef.current, ai, diffRef.current)
-      if (mv) place(boardRef.current, mv[0], mv[1], ai)
-    }, 320)
-    aiTimer.current = timer
+    const runId = ++aiRunId.current
+    setThinking(true)
+    const { move } = await aiEngineMove<[number, number]>({
+      game: 'gomoku',
+      level: diffRef.current,
+      legal: candidates(boardRef.current).map((m) => ({ text: moveToText(m), move: m })),
+      side: String(ai),
+      search: (pool) => bestOf(boardRef.current, ai, pool),
+      local: () => aiMove(boardRef.current, ai, diffRef.current),
+    })
+    if (runId !== aiRunId.current || statusRef.current !== 'running') return
+    if (move) place(boardRef.current, move[0], move[1], ai)
+    setThinking(false)
   }, [ai, place])
 
   const start = useCallback(() => {
-    if (aiTimer.current) window.clearTimeout(aiTimer.current)
-    setBoard(emptyBoard())
+    aiRunId.current++
+    const b = emptyBoard()
+    setBoard(b)
+    boardRef.current = b
     setLastMove(-1)
     setWinLine([])
     setCurrent(1)
     currentRef.current = 1
     setOver(null)
     setScore(0)
+    setThinking(false)
     setStatus('running')
     // 若玩家选白，AI 先手
-    if (playerRef.current === 2) {
-      aiTimer.current = window.setTimeout(() => {
-        const mv = aiMove(emptyBoard(), ai, diffRef.current)
-        if (mv) place(emptyBoard(), mv[0], mv[1], ai)
-      }, 320)
-    }
-  }, [ai, place])
+    if (playerRef.current === 2) void doAIMove()
+  }, [doAIMove])
 
   const onCellClick = useCallback(
     (x: number, y: number) => {
       if (statusRef.current !== 'running') return
+      if (thinking) return
       if (currentRef.current !== playerRef.current) return
       if (boardRef.current[idx(x, y)] !== 0) return
       const ended = place(boardRef.current, x, y, playerRef.current)
-      if (!ended) doAIMove()
+      if (!ended) void doAIMove()
     },
-    [place, doAIMove],
+    [place, doAIMove, thinking],
   )
 
   return (
@@ -145,8 +158,20 @@ export default function Gomoku({ onGameOver }: GameProps) {
           <span className={shared.hudLabel}>AI</span>
           <span className={shared.hudValue}>
             {DIFFS.find((d) => d.id === difficulty)?.label}
+            {difficulty !== 'easy' && (
+              <span className={shared.aiTag} title="由 Cloudflare Workers AI 生成候选">
+                · CF
+              </span>
+            )}
           </span>
         </div>
+        {thinking && (
+          <div className={shared.hudItem}>
+            <span className={`${shared.hudValue} ${shared.thinking}`}>
+              {difficulty === 'easy' ? '思考中…' : 'AI 思考中…'}
+            </span>
+          </div>
+        )}
       </div>
 
       <div className={styles.sideRow}>
@@ -241,6 +266,7 @@ export default function Gomoku({ onGameOver }: GameProps) {
           </div>
           <p className={styles.tip}>
             点击棋盘交点落子。形成横、竖、斜任意方向五连即胜。
+            中等/困难由 Cloudflare AI 生成候选（需登录，失败自动回落本地）。
           </p>
         </div>
       </div>

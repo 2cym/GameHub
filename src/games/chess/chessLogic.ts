@@ -440,3 +440,38 @@ export function aiMove(s: State, difficulty: Difficulty): Move | null {
   }
   return best[Math.floor(Math.random() * best.length)]
 }
+
+// ===== 走法文本序列化（供 Workers AI 候选交换） =====
+
+const FILES = 'abcdefgh'
+const fileChar = (x: number) => FILES[x]
+/** y=0 是黑方底线即第 8 排 */
+const rankChar = (y: number) => String(8 - y)
+const square = (i: number) => fileChar(i % N) + rankChar(Math.floor(i / N))
+
+/** Move → UCI 文本，如 e2e4 / e7e8q */
+export function moveToText(m: Move): string {
+  return square(m.from) + square(m.to) + (m.promo ?? '')
+}
+
+/**
+ * 在给定候选集合内做 α-β 搜索选最优（Workers AI 粗筛后本地精筛）。
+ * depth 为剩余搜索深度；候选为空返回 null。
+ */
+export function bestOf(s: State, candidates: Move[], depth: number): Move | null {
+  if (candidates.length === 0) return null
+  const moves = candidates.slice().sort((a, b) => moveScore(s, b) - moveScore(s, a))
+  let bestScore = -Infinity
+  let best: Move[] = []
+  for (const m of moves) {
+    const ns = applyMove(s, m)
+    const score = -negamax(ns, depth - 1, -Infinity, Infinity)
+    if (score > bestScore) {
+      bestScore = score
+      best = [m]
+    } else if (score === bestScore) {
+      best.push(m)
+    }
+  }
+  return best[Math.floor(Math.random() * best.length)]
+}

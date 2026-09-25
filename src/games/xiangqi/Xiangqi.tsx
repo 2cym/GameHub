@@ -1,17 +1,21 @@
 import { useCallback, useRef, useState } from 'react'
 import type { GameProps, GameStatus } from '../../lib/types'
 import { GameOverlay } from '../shared/GameOverlay'
+import { aiEngineMove } from '../shared/aiEngine'
 import { toast } from '../../stores/toast'
 import shared from '../shared/game.module.css'
 import styles from './Xiangqi.module.css'
 import {
   aiMove,
   applyMove,
+  bestOf,
   initialBoard,
   isCheckmate,
   isInCheck,
   isStalemate,
+  legalMoves,
   legalTargets,
+  moveToText,
   type Board,
   type Difficulty,
   type Move,
@@ -71,7 +75,8 @@ export default function Xiangqi({ onGameOver }: GameProps) {
   diffRef.current = difficulty
   const gameOverRef = useRef(onGameOver)
   gameOverRef.current = onGameOver
-  const aiTimer = useRef<number | null>(null)
+  /** AI 回合序号：每次发起 +1，旧回合的异步结果到达时直接丢弃 */
+  const aiRunId = useRef(0)
 
   const aiSide: Side = playerColor === 'r' ? 'b' : 'r'
 
@@ -114,19 +119,29 @@ export default function Xiangqi({ onGameOver }: GameProps) {
     [checkEnd],
   )
 
-  const doAIMove = useCallback(() => {
+  const doAIMove = useCallback(async () => {
+    if (statusRef.current !== 'running') return
+    const runId = ++aiRunId.current
     setThinking(true)
-    const timer = window.setTimeout(() => {
-      const mv = aiMove(boardRef.current, aiSide, diffRef.current)
-      if (mv) playMove(boardRef.current, mv, aiSide)
-      setThinking(false)
-    }, 400)
-    aiTimer.current = timer
+    const { move } = await aiEngineMove<Move>({
+      game: 'xiangqi',
+      level: diffRef.current,
+      legal: legalMoves(boardRef.current, aiSide).map((m) => ({ text: moveToText(m), move: m })),
+      side: aiSide,
+      search: (pool) =>
+        bestOf(boardRef.current, aiSide, pool, diffRef.current === 'hard' ? 3 : 2),
+      local: () => aiMove(boardRef.current, aiSide, diffRef.current),
+    })
+    if (runId !== aiRunId.current || statusRef.current !== 'running') return
+    if (move) playMove(boardRef.current, move, aiSide)
+    setThinking(false)
   }, [aiSide, playMove])
 
   const start = useCallback(() => {
-    if (aiTimer.current) window.clearTimeout(aiTimer.current)
-    setBoard(initialBoard())
+    aiRunId.current++
+    const b = initialBoard()
+    setBoard(b)
+    boardRef.current = b
     setTurn('r')
     turnRef.current = 'r'
     setSelected(-1)
@@ -137,15 +152,8 @@ export default function Xiangqi({ onGameOver }: GameProps) {
     setThinking(false)
     setStatus('running')
     // 玩家执黑则 AI 先走（红先）
-    if (playerRef.current === 'b') {
-      aiTimer.current = window.setTimeout(() => {
-        const mv = aiMove(initialBoard(), 'r', diffRef.current)
-        if (mv) playMove(initialBoard(), mv, 'r')
-        setThinking(false)
-      }, 400)
-      setThinking(true)
-    }
-  }, [playMove])
+    if (playerRef.current === 'b') void doAIMove()
+  }, [doAIMove])
 
   const onCellClick = useCallback(
     (i: number) => {
@@ -191,11 +199,18 @@ export default function Xiangqi({ onGameOver }: GameProps) {
           <span className={shared.hudLabel}>AI</span>
           <span className={shared.hudValue}>
             {DIFFS.find((d) => d.id === difficulty)?.label}
+            {difficulty !== 'easy' && (
+              <span className={shared.aiTag} title="由 Cloudflare Workers AI 生成候选">
+                · CF
+              </span>
+            )}
           </span>
         </div>
         {thinking && (
           <div className={shared.hudItem}>
-            <span className={shared.hudValue}>思考中…</span>
+            <span className={`${shared.hudValue} ${shared.thinking}`}>
+              {difficulty === 'easy' ? '思考中…' : 'AI 思考中…'}
+            </span>
           </div>
         )}
       </div>
@@ -303,6 +318,7 @@ export default function Xiangqi({ onGameOver }: GameProps) {
           </div>
           <p className={styles.tip}>
             点选己方棋子，绿点为可落子位置。吃掉对方将/帅即胜。
+            中等/困难由 Cloudflare AI 生成候选（需登录，失败自动回落本地）。
           </p>
         </div>
       </div>
