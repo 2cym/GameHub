@@ -14,6 +14,12 @@
       "database_id": "5b2be9ae-e434-4517-99cf-45edda4db070"
     }
   ],
+  // Cloudflare Workers AI：仅在后台把 AI 提供方切到 cloudflare 时才使用。
+  // 需在 Cloudflare 控制台 Workers & Pages → Workers AI 开通，否则该提供方自动回落本地 AI。
+  "ai": {
+    "binding": "AI",
+    "type": "workers-ai"
+  },
   "vars": {
     // 发件人；RESEND_API_KEY 走 npx wrangler secret put，不写入本文件
     "MAIL_FROM": "GameHub <onboarding@resend.dev>",

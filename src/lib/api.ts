@@ -69,6 +69,14 @@ export interface AdminDebug {
   adminEmail: string
   mailFrom: string
   workerVersion: string
+  /** OpenAI 兼容接口的凭据（AI_BASE_URL / AI_API_KEY）是否齐备 */
+  aiProvider: string
+  /** 后台选择的提供方：api / cloudflare / off */
+  aiProviderSetting: AiProvider
+  aiModel: string
+  aiReasoning: 'on' | 'off'
+  aiWorkersAiAvailable: boolean
+  turnstile: string
 }
 
 export interface AdminAnalytics {
@@ -243,6 +251,69 @@ export const adminApi = {
   debug: () => request<AdminDebug>('/api/admin/debug'),
 
   analytics: () => request<AdminAnalytics>('/api/admin/analytics'),
+}
+
+// ---------- 管理后台 AI 设置 ----------
+
+export type AiProvider = 'api' | 'cloudflare' | 'off'
+
+export interface AiModelOption {
+  id: string
+  label: string
+  desc: string
+  /** 该模型强制的 temperature；仅部分模型声明 */
+  temp?: number
+}
+
+export interface AiSettings {
+  provider: AiProvider
+  apiModel: string
+  cfModel: string
+  reasoning: boolean
+}
+
+export interface AiCapabilities {
+  api: { configured: boolean; baseUrl: string }
+  cloudflare: { available: boolean }
+}
+
+export interface AiSettingsResponse {
+  settings: AiSettings
+  apiModels: AiModelOption[]
+  cfModels: AiModelOption[]
+  capabilities: AiCapabilities
+}
+
+export interface AiSettingsPatch {
+  provider?: AiProvider
+  apiModel?: string
+  cfModel?: string
+  reasoning?: boolean
+}
+
+export interface AiTestResult {
+  ok: boolean
+  provider: AiProvider
+  model: string
+  reasoning?: boolean
+  ms?: number
+  parsed?: string[]
+  raw?: string
+  error?: string
+}
+
+export const aiSettingsApi = {
+  get: () => request<AiSettingsResponse>('/api/admin/settings/ai'),
+
+  save: (patch: AiSettingsPatch) =>
+    request<{ settings: AiSettings; capabilities: AiCapabilities }>('/api/admin/settings/ai', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }),
+
+  test: (patch?: AiSettingsPatch) =>
+    post<AiTestResult>('/api/admin/settings/ai/test', patch ?? {}),
 }
 
 // ---------- 留言板 API ----------

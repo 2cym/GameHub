@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { adminApi, fileApi, messageApi, type AdminAnalytics, type AdminDebug, type AdminStats, type AdminUserDetail, type AdminUserRow, type FileRow, type MessageRow, type StorageInfo } from '../lib/api'
+import { adminApi, aiSettingsApi, fileApi, messageApi, type AiProvider, type AiSettingsResponse, type AiTestResult, type AdminAnalytics, type AdminDebug, type AdminStats, type AdminUserDetail, type AdminUserRow, type FileRow, type MessageRow, type StorageInfo } from '../lib/api'
 import { useAuth } from '../stores/auth'
 import { toast } from '../stores/toast'
 import styles from './Admin.module.css'
 
-type Tab = 'dashboard' | 'users' | 'analytics' | 'debug' | 'messages' | 'files'
+type Tab = 'dashboard' | 'users' | 'analytics' | 'debug' | 'messages' | 'files' | 'settings'
 
 const PAGE_SIZE = 15
 
@@ -67,6 +67,7 @@ export function AdminPage() {
         {(
           [
             ['dashboard', '系统概览'],
+            ['settings', 'AI 设置'],
             ['users', '用户管理'],
             ['analytics', '流量监控'],
             ['messages', '留言板'],
@@ -91,6 +92,8 @@ export function AdminPage() {
           onLoad={() => { setLoading(true); adminApi.stats().then(setStats).catch(() => toast('加载失败', 'error')).finally(() => setLoading(false)) }}
         />
       )}
+
+      {tab === 'settings' && <AiSettingsTab />}
 
       {tab === 'users' && (
         <UsersTab
@@ -303,6 +306,193 @@ function DashboardTab({
           </table>
         </div>
       )}
+    </div>
+  )
+}
+
+// ---------- AI Settings Tab ----------
+
+const PROVIDER_LABEL: Record<AiProvider, string> = {
+  api: 'API 接口',
+  cloudflare: 'Cloudflare Workers AI',
+  off: '关闭',
+}
+
+function AiSettingsTab() {
+  const [data, setData] = useState<AiSettingsResponse | null>(null)
+  const [provider, setProvider] = useState<AiProvider>('api')
+  const [apiModel, setApiModel] = useState('')
+  const [cfModel, setCfModel] = useState('')
+  const [reasoning, setReasoning] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<AiTestResult | null>(null)
+
+  useEffect(() => {
+    aiSettingsApi
+      .get()
+      .then((r) => {
+        setData(r)
+        setProvider(r.settings.provider)
+        setApiModel(r.settings.apiModel)
+        setCfModel(r.settings.cfModel)
+        setReasoning(r.settings.reasoning)
+      })
+      .catch(() => toast('加载 AI 设置失败', 'error'))
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!data) {
+    return <div className={styles.loading}><span className={styles.spinner} /> 加载中…</div>
+  }
+
+  const models = provider === 'cloudflare' ? data.cfModels : data.apiModels
+  const modelId = provider === 'cloudflare' ? cfModel : apiModel
+  const current = models.find((m) => m.id === modelId)
+  const patch = { provider, apiModel, cfModel, reasoning }
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const res = await aiSettingsApi.save(patch)
+      setData((d) => (d ? { ...d, settings: res.settings, capabilities: res.capabilities } : d))
+      toast('AI 设置已保存，下一手棋生效', 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '保存失败', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const runTest = async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      setTestResult(await aiSettingsApi.test(patch))
+    } catch (e) {
+      setTestResult({
+        ok: false,
+        provider,
+        model: modelId,
+        error: e instanceof Error ? e.message : '请求失败',
+      })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <div>
+      <div className={styles.section}>
+        <h2 className={styles.sectionTitle}>AI 提供方</h2>
+        <div className={styles.segGroup}>
+          {(['api', 'cloudflare', 'off'] as AiProvider[]).map((p) => (
+            <button
+              key={p}
+              className={`${styles.seg} ${provider === p ? styles.segActive : ''}`}
+              onClick={() => { setProvider(p); setTestResult(null) }}
+            >
+              {PROVIDER_LABEL[p]}
+            </button>
+          ))}
+        </div>
+        <div className={styles.capRow}>
+          <span className={`${styles.checkDot} ${data.capabilities.api.configured ? styles.checkDotOk : styles.checkDotFail}`} />
+          <span>
+            API 接口{data.capabilities.api.configured
+              ? `：已配置 ${data.capabilities.api.baseUrl}`
+              : '：凭据未配置（AI_BASE_URL / AI_API_KEY）'}
+          </span>
+        </div>
+        <div className={styles.capRow}>
+          <span className={`${styles.checkDot} ${data.capabilities.cloudflare.available ? styles.checkDotOk : styles.checkDotFail}`} />
+          <span>
+            {data.capabilities.cloudflare.available
+              ? 'Workers AI：可用'
+              : 'Workers AI：未开通（Cloudflare 控制台 → Workers & Pages → Workers AI 启用）'}
+          </span>
+        </div>
+      </div>
+
+      {provider === 'off' ? (
+        <div className={styles.section}>
+          <p className={styles.hint}>
+            已关闭：四个棋类的中等/困难难度全部使用本地 AI，不会调用任何外部模型，也不会产生费用。
+          </p>
+        </div>
+      ) : (
+        <div className={styles.section}>
+          <h2 className={styles.sectionTitle}>模型</h2>
+          <select
+            className={`input ${styles.selectField}`}
+            value={modelId}
+            onChange={(e) => {
+              if (provider === 'cloudflare') setCfModel(e.target.value)
+              else setApiModel(e.target.value)
+              setTestResult(null)
+            }}
+          >
+            {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+          {current && <p className={styles.hint}>{current.desc}</p>}
+          {current?.temp !== undefined && (
+            <p className={styles.hint}>该模型仅接受 temperature={current.temp}，已自动固定。</p>
+          )}
+        </div>
+      )}
+
+      <div className={styles.section}>
+        <h2 className={styles.sectionTitle}>模型推理</h2>
+        <div className={styles.segGroup}>
+          <button
+            className={`${styles.seg} ${!reasoning ? styles.segActive : ''}`}
+            onClick={() => { setReasoning(false); setTestResult(null) }}
+          >
+            关闭（推荐）
+          </button>
+          <button
+            className={`${styles.seg} ${reasoning ? styles.segActive : ''}`}
+            onClick={() => { setReasoning(true); setTestResult(null) }}
+          >
+            开启
+          </button>
+        </div>
+        <p className={styles.hint}>
+          {reasoning
+            ? '开启：模型先思考再落子，判断可能更好，但单手耗时可能从 1–4 秒升到 20–40 秒；部分模型会把 token 预算烧在推理上、返回空正文，此时自动回落本地 AI。'
+            : '关闭：模型直接输出候选走法，单手约 1–4 秒。实测各模型关闭推理后都能正常返回候选。'}
+          {provider === 'cloudflare' ? '（该选项仅对 API 接口生效）' : ''}
+        </p>
+      </div>
+
+      <div className={styles.section}>
+        <div className={styles.toolbar}>
+          <button className="btn btn-primary" disabled={saving || testing} onClick={save}>
+            {saving ? '保存中…' : '保存设置'}
+          </button>
+          <button className="btn btn-ghost" disabled={saving || testing || provider === 'off'} onClick={runTest}>
+            {testing ? '测试中…' : '测试当前配置'}
+          </button>
+        </div>
+        <p className={styles.hint}>
+          测试会真实调用一次模型（用国际象棋开局局面），确认它能返回合法候选后再切换。
+        </p>
+        {testResult && (
+          <div className={`${styles.testResult} ${testResult.ok ? styles.testOk : styles.testFail}`}>
+            <div className={styles.testTitle}>
+              <span>{testResult.ok ? '✓ 配置可用' : '✕ 配置不可用'}</span>
+              <span className="font-mono">
+                {testResult.model}
+                {typeof testResult.ms === 'number' ? ` · ${testResult.ms}ms` : ''}
+              </span>
+            </div>
+            {testResult.ok && testResult.parsed && (
+              <div className="font-mono">{JSON.stringify(testResult.parsed)}</div>
+            )}
+            {!testResult.ok && testResult.error && <div>{testResult.error}</div>}
+            {testResult.raw && <pre className={styles.testRaw}>{testResult.raw}</pre>}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

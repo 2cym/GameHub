@@ -72,3 +72,9 @@ CREATE TABLE IF NOT EXISTS ai_usage (
   used    INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, date)
 );
+
+-- 站点设置（管理后台可调）；key 白名单在 worker 端校验，缺值时用代码默认。
+CREATE TABLE IF NOT EXISTS site_settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
