@@ -334,6 +334,9 @@ export const fileApi = {
 export type AiGame = 'chess' | 'gomoku' | 'go' | 'xiangqi'
 export type AiLevel = 'medium' | 'hard'
 
+/** 本次 AI 请求的额度归属 */
+export type AiIdentity = 'user' | 'guest' | 'none'
+
 export interface AiMoveResponse {
   ok: boolean
   /** cf = Workers AI 给出了合法候选；local = 已回落本地 AI */
@@ -343,13 +346,41 @@ export interface AiMoveResponse {
   model: string
   aiUsedToday: number
   aiLimit: number
+  /** 本次按谁记账：账号 / 游客设备 / 身份无法识别 */
+  identity: AiIdentity
 }
 
 /**
  * 请求 AI 候选走法。
  * legalMoves 由客户端用本地规则算好后传入，服务端只负责喂给 LLM 并过滤非法输出。
+ * 登录账号凭 Cookie 记账；游客凭 deviceId + Turnstile token 记账，额度相同。
  */
 export const aiApi = {
-  move: (game: AiGame, level: AiLevel, legalMoves: string[], side: string) =>
-    post<AiMoveResponse>('/api/ai/move', { game, level, legalMoves, side }),
+  move: (
+    game: AiGame,
+    level: AiLevel,
+    legalMoves: string[],
+    side: string,
+    deviceId: string,
+    turnstileToken?: string,
+  ) =>
+    post<AiMoveResponse>('/api/ai/move', {
+      game,
+      level,
+      legalMoves,
+      side,
+      deviceId,
+      turnstileToken,
+    }),
+}
+
+// ---------- 站点公开配置 ----------
+
+/** 由服务端下发；turnstileSiteKey 为空表示站点未启用人机验证 */
+export interface PublicConfig {
+  turnstileSiteKey: string | null
+}
+
+export const configApi = {
+  get: () => request<PublicConfig>('/api/config'),
 }

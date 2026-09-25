@@ -44,6 +44,8 @@ export default function Go({ onGameOver }: GameProps) {
   const [score, setScore] = useState(0)
   const [result, setResult] = useState<'win' | 'lose' | 'draw' | null>(null)
   const [thinking, setThinking] = useState(false)
+  /** 上一手 AI 实际使用的引擎；只有真的用到 CF 才显示标记 */
+  const [aiSrc, setAiSrc] = useState<'cf' | 'local'>('local')
 
   const statusRef = useRef(status)
   statusRef.current = status
@@ -123,7 +125,7 @@ export default function Go({ onGameOver }: GameProps) {
     const legal = candidates(b)
       .filter((i) => b[i] === 0 && !tryMove(b, i, ai, ko).illegal)
       .map((i) => ({ text: moveToText(i), move: i }))
-    const { move } = await aiEngineMove<number>({
+    const { move, engine } = await aiEngineMove<number>({
       game: 'go',
       level: diffRef.current,
       legal,
@@ -132,6 +134,7 @@ export default function Go({ onGameOver }: GameProps) {
       local: () => aiMove(b, ai, ko, diffRef.current),
     })
     if (runId !== aiRunId.current || statusRef.current !== 'running') return
+    setAiSrc(engine)
     if (move === null) {
       // AI 虚手（无合理走法或优势足够则 pass）
       setPasses((p) => {
@@ -164,6 +167,7 @@ export default function Go({ onGameOver }: GameProps) {
     setResult(null)
     setScore(0)
     setThinking(false)
+    setAiSrc('local')
     setStatus('running')
     if (playerRef.current === 2) void doAIMove()
   }, [doAIMove])
@@ -228,8 +232,8 @@ export default function Go({ onGameOver }: GameProps) {
           <span className={shared.hudLabel}>AI</span>
           <span className={shared.hudValue}>
             {DIFFS.find((d) => d.id === difficulty)?.label}
-            {difficulty !== 'easy' && (
-              <span className={shared.aiTag} title="由 Cloudflare Workers AI 生成候选">
+            {difficulty !== 'easy' && aiSrc === 'cf' && (
+              <span className={shared.aiTag} title="本手由 Cloudflare Workers AI 生成候选">
                 · CF
               </span>
             )}
@@ -335,7 +339,7 @@ export default function Go({ onGameOver }: GameProps) {
           </button>
           <p className={styles.tip}>
             落子围地提子。连续两次虚手即终局数目。黑贴白 6.5 目。
-            中等/困难由 Cloudflare AI 生成候选（需登录，失败自动回落本地）。
+            中等/困难由 Cloudflare AI 生成候选（游客需人机验证，失败自动回落本地）。
           </p>
         </div>
       </div>

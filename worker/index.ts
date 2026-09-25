@@ -38,6 +38,9 @@ export interface Env {
   ADMIN_EMAIL?: string
   /** Workers AI 内建 subrequest；账号未开通 Workers AI 时为 undefined */
   AI?: WorkersAI
+  /** Turnstile site key（公开，客户端用）；SECRET 走 wrangler secret put */
+  TURNSTILE_SITE_KEY?: string
+  TURNSTILE_SECRET?: string
 }
 
 interface AuthUser {
@@ -86,6 +89,18 @@ const AI_GAMES = new Set(['chess', 'gomoku', 'go', 'xiangqi'])
 const AI_TIMEOUT_MS = 20000
 /** 换模型只需改这里 */
 const AI_MODEL = '@cf-workers/arena-llm/llama-3-1-70b'
+/** 游客额度归属前缀：同一设备 ID 一天共享一个额度 */
+const AI_GUEST_PREFIX = 'guest:'
+/** 设备 ID 格式：客户端 16 字节随机数转十六进制 */
+const DEVICE_ID_RE = /^[a-f0-9]{32}$/
+/** 设备 ID 上限，防超大请求体 */
+const DEVICE_ID_MAX = 64
+/** Turnstile token 上限 */
+const TURNSTILE_TOKEN_MAX = 2048
+/** Turnstile 校验服务地址 */
+const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
+/** 校验超时，避免拖慢 AI 请求 */
+const TURNSTILE_TIMEOUT_MS = 5000
 
 type AiGameName = '国际象棋' | '五子棋' | '围棋' | '中国象棋'
 const AI_GAME_LABEL: Record<string, AiGameName> = {
@@ -93,6 +108,25 @@ const AI_GAME_LABEL: Record<string, AiGameName> = {
   gomoku: '五子棋',
   go: '围棋',
   xiangqi: '中国象棋',
+}
+
+/** 校验游客提交的 Turnstile token；secret 是否配置由调用方判断 */
+async function verifyTurnstile(secret: string, token: string, remoteIp: string): Promise<boolean> {
+  try {
+    const res = await fetch(TURNSTILE_VERIFY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body:
+        `secret=${encodeURIComponent(secret)}` +
+        `&response=${encodeURIComponent(token)}` +
+        `&remoteip=${encodeURIComponent(remoteIp)}`,
+      signal: AbortSignal.timeout(TURNSTILE_TIMEOUT_MS),
+    })
+    const data = (await res.json().catch(() => null)) as { success?: boolean } | null
+    return !!data?.success
+  } catch {
+    return false
+  }
 }
 
 async function loadUser(db: D1Database, id: string): Promise<AuthUser | null> {
@@ -553,6 +587,8 @@ app.get('/api/admin/debug', requireAuth, requireAdmin, async (c) => {
     adminEmail: c.env.ADMIN_EMAIL ?? 'NOT_SET',
     mailFrom: c.env.MAIL_FROM ?? 'default',
     workersAi: c.env.AI ? 'available' : 'NOT_ENABLED',
+    turnstile:
+      c.env.TURNSTILE_SECRET && c.env.TURNSTILE_SITE_KEY ? 'configured' : 'NOT_CONFIGURED',
     aiModel: AI_MODEL,
     aiDailyLimit: AI_DAILY_LIMIT,
     workerVersion: process.env.WORKER_VERSION ?? 'unknown',
@@ -777,7 +813,7 @@ app.post('/api/rooms/:id/move', requireAuth, async (c) => {
   const userColor = room.host_id === user.id ? room.host_color : room.player_color
   if (room.current_turn !== userColor) throw new HTTPError(400, '还没轮到你')
 
-  const newMoves = (room.moves_count ?? 0) + 1
+  const newMoves = (Number(room.moves_count) || 0) + 1
   const now = Math.floor(Date.now() / 1000)
   const nextTurn = userColor === 'r' ? 'b' : 'r'
 
@@ -807,7 +843,7 @@ app.post('/api/rooms/:id/resign', requireAuth, async (c) => {
   await c.env.DB.prepare(
     `INSERT INTO game_histories (room_id, game_id, player_id, opponent_id, winner, moves, duration)
      VALUES (?, ?, ?, ?, ?, 0, ?)`,
-  ).bind(roomId, room.game_id, user.id, winnerId!, 'resign', now - Math.floor(room.created_at)).run()
+  ).bind(roomId, room.game_id, user.id, winnerId!, 'resign', now - Math.floor(Number(room.created_at))).run()
 
   return c.json({ ok: true, winner: winnerId })
 })
@@ -830,7 +866,7 @@ app.delete('/api/rooms/:id', requireAuth, async (c) => {
     await c.env.DB.prepare(
       `INSERT INTO game_histories (room_id, game_id, player_id, opponent_id, winner, moves, duration)
        VALUES (?, ?, ?, ?, ?, 0, ?)`,
-    ).bind(roomId, room.game_id, user.id, winnerId!, 'leave', now - Math.floor(room.created_at)).run()
+    ).bind(roomId, room.game_id, user.id, winnerId!, 'leave', now - Math.floor(Number(room.created_at))).run()
   }
   return c.json({ ok: true })
 })
@@ -898,11 +934,19 @@ async function incAiUsage(db: D1Database, userId: string): Promise<void> {
     .run()
 }
 
-app.post('/api/ai/move', requireAuth, async (c) => {
-  const user = c.get('user')
+/** 公开站点配置：客户端据此决定是否渲染 Turnstile */
+app.get('/api/config', async (c) => {
+  return c.json({ turnstileSiteKey: c.env.TURNSTILE_SITE_KEY || null })
+})
+
+/**
+ * AI 候选走法。无需登录：登录账号凭 Cookie 记账，游客凭 deviceId + Turnstile 记账，额度相同。
+ * 任何异常都返回 engine:'local'，由客户端回落本地 AI，保证对局永不卡住。
+ */
+app.post('/api/ai/move', async (c) => {
   const body = await c.req.json().catch(() => null)
   if (!body) badRequest('请求体格式错误')
-  const { game, level, legalMoves, side } = body as Record<string, unknown>
+  const { game, level, legalMoves, side, deviceId, turnstileToken } = body as Record<string, unknown>
 
   if (typeof game !== 'string' || !AI_GAMES.has(game)) badRequest('无效棋种')
   if (level !== 'medium' && level !== 'hard') badRequest('仅支持 medium / hard')
@@ -912,25 +956,64 @@ app.post('/api/ai/move', requireAuth, async (c) => {
   if (legal.length === 0) badRequest('没有可用走法')
   if (typeof side !== 'string' || side.length > 8) badRequest('无效走方')
 
-  const want = AI_CANDIDATES[level]
+  // 身份：有效登录态优先；否则接受格式合法的设备 ID 作为游客身份
+  const authCookie = getCookie(c, COOKIE_NAME)
+  const payload = authCookie ? await verifyToken(authCookie, c.env.JWT_SECRET) : null
+  const account = payload ? await loadUser(c.env.DB, payload.uid) : null
+
+  const owner: { id: string; identity: 'user' | 'guest' } | null =
+    account && !account.is_banned
+      ? { id: account.id, identity: 'user' }
+      : typeof deviceId === 'string' &&
+          deviceId.length <= DEVICE_ID_MAX &&
+          DEVICE_ID_RE.test(deviceId)
+        ? { id: AI_GUEST_PREFIX + deviceId.toLowerCase(), identity: 'guest' }
+        : null
+
   const limit = AI_DAILY_LIMIT
-  const legalSet = new Set(legal)
-
+  const identity = owner ? owner.identity : 'none'
   const reply = (engine: 'cf' | 'local', candidates: string[], used: number): Response =>
-    c.json({ ok: true, engine, candidates, model: AI_MODEL, aiUsedToday: used, aiLimit: limit })
+    c.json({
+      ok: true,
+      engine,
+      candidates,
+      model: AI_MODEL,
+      aiUsedToday: used,
+      aiLimit: limit,
+      identity,
+    })
 
+  const used = owner ? await readAiUsage(c.env.DB, owner.id) : 0
   const ai = c.env.AI
-  const used = await readAiUsage(c.env.DB, user.id)
 
-  if (!ai) {
-    // Workers AI 未开通：回落，不计费
+  if (!owner || !ai) {
+    // 身份无法识别，或账号未开通 Workers AI：回落本地，不计费
     return reply('local', [], used)
   }
+
+  // 游客必须过 Turnstile；secret 未配置视为站点未启用，游客一律回落本地
+  if (owner.identity === 'guest') {
+    const secret = c.env.TURNSTILE_SECRET ?? ''
+    const passed =
+      secret.length > 0 &&
+      typeof turnstileToken === 'string' &&
+      turnstileToken.length > 0 &&
+      turnstileToken.length <= TURNSTILE_TOKEN_MAX &&
+      (await verifyTurnstile(
+        secret,
+        turnstileToken,
+        c.req.header('CF-Connecting-IP') ?? c.req.header('X-Forwarded-For') ?? '',
+      ))
+    if (!passed) return reply('local', [], used)
+  }
+
   if (used >= limit) {
     // 当日额度用尽：回落本地 AI
     return reply('local', [], used)
   }
 
+  const want = AI_CANDIDATES[level]
+  const legalSet = new Set(legal)
   const show = legal.slice(0, AI_MAX_LEGAL_MOVES)
   const prompt =
     `你是${AI_GAME_LABEL[game]}特级大师引擎。下面是当前局面的全部合法走法，请选出最值得考虑的 ${want} 步，` +
@@ -969,7 +1052,7 @@ app.post('/api/ai/move', requireAuth, async (c) => {
     // 输出里没有一个合法候选：回落本地，本次不计费
     return reply('local', [], used)
   }
-  await incAiUsage(c.env.DB, user.id)
+  await incAiUsage(c.env.DB, owner.id)
   return reply('cf', candidates, used + 1)
 })
 

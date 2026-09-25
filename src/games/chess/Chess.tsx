@@ -49,6 +49,8 @@ export default function Chess({ onGameOver }: GameProps) {
   const [result, setResult] = useState<'win' | 'lose' | 'draw' | null>(null)
   const [score, setScore] = useState(0)
   const [thinking, setThinking] = useState(false)
+  /** 上一手 AI 实际使用的引擎；只有真的用到 CF 才显示标记 */
+  const [aiSrc, setAiSrc] = useState<'cf' | 'local'>('local')
 
   const statusRef = useRef(status)
   statusRef.current = status
@@ -117,7 +119,7 @@ export default function Chess({ onGameOver }: GameProps) {
     if (statusRef.current !== 'running') return
     const runId = ++aiRunId.current
     setThinking(true)
-    const { move } = await aiEngineMove<Move>({
+    const { move, engine } = await aiEngineMove<Move>({
       game: 'chess',
       level: diffRef.current,
       legal: legalMoves(stateRef.current).map((m) => ({ text: moveToText(m), move: m })),
@@ -126,6 +128,7 @@ export default function Chess({ onGameOver }: GameProps) {
       local: () => aiMove(stateRef.current, diffRef.current),
     })
     if (runId !== aiRunId.current || statusRef.current !== 'running') return
+    setAiSrc(engine)
     if (move) playMove(stateRef.current, move, aiSide)
     setThinking(false)
   }, [aiSide, playMove])
@@ -141,6 +144,7 @@ export default function Chess({ onGameOver }: GameProps) {
     setResult(null)
     setScore(0)
     setThinking(false)
+    setAiSrc('local')
     setStatus('running')
     if (playerRef.current === 'b') void doAIMove()
   }, [doAIMove])
@@ -233,8 +237,8 @@ export default function Chess({ onGameOver }: GameProps) {
           <span className={shared.hudLabel}>AI</span>
           <span className={shared.hudValue}>
             {DIFFS.find((d) => d.id === difficulty)?.label}
-            {difficulty !== 'easy' && (
-              <span className={shared.aiTag} title="由 Cloudflare Workers AI 生成候选">
+            {difficulty !== 'easy' && aiSrc === 'cf' && (
+              <span className={shared.aiTag} title="本手由 Cloudflare Workers AI 生成候选">
                 · CF
               </span>
             )}
@@ -310,7 +314,7 @@ export default function Chess({ onGameOver }: GameProps) {
           </div>
           <p className={styles.tip}>
             点选己方棋子，绿点为可落子位置。将死对方王即胜。
-            中等/困难由 Cloudflare AI 生成候选（需登录，失败自动回落本地）。
+            中等/困难由 Cloudflare AI 生成候选（游客需人机验证，失败自动回落本地）。
           </p>
         </div>
       </div>

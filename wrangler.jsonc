@@ -16,7 +16,11 @@
   ],
   "vars": {
     // 发件人；RESEND_API_KEY 走 npx wrangler secret put，不写入本文件
-    "MAIL_FROM": "GameHub <onboarding@resend.dev>"
+    "MAIL_FROM": "GameHub <onboarding@resend.dev>",
+    // Turnstile 站点密钥（公开值，Cloudflare 控制台 Turnstile 创建后获取）
+    // 留空 = 站点未启用人机验证，游客无法使用 AI（登录账号不受影响）
+    // 对应的密钥走 `npx wrangler secret put TURNSTILE_SECRET`，不写入本文件
+    "TURNSTILE_SITE_KEY": ""
   },
   "observability": {
     "enabled": true

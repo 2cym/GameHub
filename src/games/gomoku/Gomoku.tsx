@@ -41,6 +41,8 @@ export default function Gomoku({ onGameOver }: GameProps) {
   const [over, setOver] = useState<'win' | 'lose' | 'draw' | null>(null)
   const [score, setScore] = useState(0)
   const [thinking, setThinking] = useState(false)
+  /** 上一手 AI 实际使用的引擎；只有真的用到 CF 才显示标记 */
+  const [aiSrc, setAiSrc] = useState<'cf' | 'local'>('local')
 
   const statusRef = useRef(status)
   statusRef.current = status
@@ -97,7 +99,7 @@ export default function Gomoku({ onGameOver }: GameProps) {
     if (statusRef.current !== 'running') return
     const runId = ++aiRunId.current
     setThinking(true)
-    const { move } = await aiEngineMove<[number, number]>({
+    const { move, engine } = await aiEngineMove<[number, number]>({
       game: 'gomoku',
       level: diffRef.current,
       legal: candidates(boardRef.current).map((m) => ({ text: moveToText(m), move: m })),
@@ -106,6 +108,7 @@ export default function Gomoku({ onGameOver }: GameProps) {
       local: () => aiMove(boardRef.current, ai, diffRef.current),
     })
     if (runId !== aiRunId.current || statusRef.current !== 'running') return
+    setAiSrc(engine)
     if (move) place(boardRef.current, move[0], move[1], ai)
     setThinking(false)
   }, [ai, place])
@@ -122,6 +125,7 @@ export default function Gomoku({ onGameOver }: GameProps) {
     setOver(null)
     setScore(0)
     setThinking(false)
+    setAiSrc('local')
     setStatus('running')
     // 若玩家选白，AI 先手
     if (playerRef.current === 2) void doAIMove()
@@ -158,8 +162,8 @@ export default function Gomoku({ onGameOver }: GameProps) {
           <span className={shared.hudLabel}>AI</span>
           <span className={shared.hudValue}>
             {DIFFS.find((d) => d.id === difficulty)?.label}
-            {difficulty !== 'easy' && (
-              <span className={shared.aiTag} title="由 Cloudflare Workers AI 生成候选">
+            {difficulty !== 'easy' && aiSrc === 'cf' && (
+              <span className={shared.aiTag} title="本手由 Cloudflare Workers AI 生成候选">
                 · CF
               </span>
             )}
@@ -266,7 +270,7 @@ export default function Gomoku({ onGameOver }: GameProps) {
           </div>
           <p className={styles.tip}>
             点击棋盘交点落子。形成横、竖、斜任意方向五连即胜。
-            中等/困难由 Cloudflare AI 生成候选（需登录，失败自动回落本地）。
+            中等/困难由 Cloudflare AI 生成候选（游客需人机验证，失败自动回落本地）。
           </p>
         </div>
       </div>
