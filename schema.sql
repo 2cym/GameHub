@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS file_chunks (
   FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
 );
 
--- 棋类 AI 用量（Cloudflare Workers AI 每日额度计数）
+-- 棋类 AI 用量计数。已取消步数上限，当前无代码读写本表；恢复额度限制时再启用。
 CREATE TABLE IF NOT EXISTS ai_usage (
   user_id TEXT NOT NULL,
   date    TEXT NOT NULL,

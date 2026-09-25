@@ -226,7 +226,7 @@ export function aiMove(
   return top[Math.floor(Math.random() * top.length)]
 }
 
-// ===== 走法文本序列化（供 Workers AI 候选交换） =====
+// ===== 走法文本序列化（供 AI 模型 候选交换） =====
 
 /** 落子点 → 棋盘线性下标文本，如 "260" */
 export function moveToText(i: number): string {
@@ -235,7 +235,7 @@ export function moveToText(i: number): string {
 
 
 /**
- * 在给定候选集合内按现有评分选最优（Workers AI 粗筛后本地精筛）。
+ * 在给定候选集合内按现有评分选最优（AI 模型 粗筛后本地精筛）。
  * 遵守打劫禁复；候选为空返回 null（等价于该方只能虚手）。
  */
 export function bestOf(

@@ -330,30 +330,28 @@ export const fileApi = {
 
 // ---------- 棋类 AI API ----------
 
-/** 支持 Cloudflare Workers AI 的棋种 */
+/** 支持外部 AI 服务的棋种 */
 export type AiGame = 'chess' | 'gomoku' | 'go' | 'xiangqi'
 export type AiLevel = 'medium' | 'hard'
 
-/** 本次 AI 请求的额度归属 */
+/** 本次 AI 请求按谁放行 */
 export type AiIdentity = 'user' | 'guest' | 'none'
 
 export interface AiMoveResponse {
   ok: boolean
-  /** cf = Workers AI 给出了合法候选；local = 已回落本地 AI */
+  /** cf = AI 服务给出了合法候选；local = 已回落本地 AI */
   engine: 'cf' | 'local'
-  /** LLM 返回的候选走法文本（已通过服务端合法性过滤，按优劣排序） */
+  /** 模型返回的候选走法文本（已通过服务端合法性过滤，按优劣排序） */
   candidates: string[]
   model: string
-  aiUsedToday: number
-  aiLimit: number
-  /** 本次按谁记账：账号 / 游客设备 / 身份无法识别 */
+  /** 本次按谁放行：账号 / 游客设备 / 身份无法识别 */
   identity: AiIdentity
 }
 
 /**
  * 请求 AI 候选走法。
- * legalMoves 由客户端用本地规则算好后传入，服务端只负责喂给 LLM 并过滤非法输出。
- * 登录账号凭 Cookie 记账；游客凭 deviceId + Turnstile token 记账，额度相同。
+ * legalMoves 由客户端用本地规则算好后传入，服务端只负责喂给模型并过滤非法输出。
+ * 登录账号凭 Cookie 放行；游客凭 deviceId + Turnstile token 放行，无步数上限。
  */
 export const aiApi = {
   move: (

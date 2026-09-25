@@ -200,7 +200,7 @@ export function aiMove(board: Board, ai: Stone, difficulty: Difficulty): [number
   return best
 }
 
-// ===== 走法文本序列化（供 Workers AI 候选交换） =====
+// ===== 走法文本序列化（供 AI 模型 候选交换） =====
 
 /** [x, y] → "x,y" */
 export function moveToText(m: [number, number]): string {
@@ -208,7 +208,7 @@ export function moveToText(m: [number, number]): string {
 }
 
 /**
- * 在给定候选集合内按"进攻 + 防守"评分选最优（Workers AI 粗筛后本地精筛）。
+ * 在给定候选集合内按"进攻 + 防守"评分选最优（AI 模型 粗筛后本地精筛）。
  * 与 aiMove 同一套评分，候选为空返回 null。
  */
 export function bestOf(

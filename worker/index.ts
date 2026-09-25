@@ -13,31 +13,16 @@ import { HTTPError, badRequest } from './errors'
 import { emailServiceReady, sendMail, verificationEmailHtml } from './email'
 import { issueCode, verifyCode, deleteCode } from './verification'
 
-/**
- * Cloudflare Workers AI 的最小类型声明。
- * @cloudflare/workers-types 未包含 Workers AI 的 run() 接口，这里只声明实际用到的部分。
- */
-interface WorkersAI {
-  run(
-    model: string,
-    body: unknown,
-    init?: {
-      temperature?: number
-      max_tokens?: number
-      stream?: boolean
-      abortSignal?: AbortSignal
-    },
-  ): Promise<unknown>
-}
-
 export interface Env {
   DB: D1Database
   JWT_SECRET: string
   RESEND_API_KEY?: string
   MAIL_FROM?: string
   ADMIN_EMAIL?: string
-  /** Workers AI 内建 subrequest；账号未开通 Workers AI 时为 undefined */
-  AI?: WorkersAI
+  /** AI 服务地址（OpenAI 兼容 /v1），例如 https://token.sensenova.cn/v1 */
+  AI_BASE_URL?: string
+  /** AI 服务密钥，走 `npx wrangler secret put AI_API_KEY`，不写入本文件 */
+  AI_API_KEY?: string
   /** Turnstile site key（公开，客户端用）；SECRET 走 wrangler secret put */
   TURNSTILE_SITE_KEY?: string
   TURNSTILE_SECRET?: string
@@ -75,10 +60,8 @@ const GAME_IDS = new Set([
   'contra',
 ])
 
-// ---------- 棋类 AI（Cloudflare Workers AI） ----------
+// ---------- 棋类 AI（OpenAI 兼容接口） ----------
 
-/** 每账号每日 AI 步数上限，超限自动回落本地 AI */
-const AI_DAILY_LIMIT = 300
 /** 走法候选上限，防止超大请求 */
 const AI_MAX_LEGAL_MOVES = 400
 /** 候选数量：中等取 3，困难取 6 */
@@ -86,9 +69,11 @@ const AI_CANDIDATES: Record<'medium' | 'hard', number> = { medium: 3, hard: 6 }
 /** temperature：困难更低以保证确定性 */
 const AI_TEMPERATURE: Record<'medium' | 'hard', number> = { medium: 0.7, hard: 0.4 }
 const AI_GAMES = new Set(['chess', 'gomoku', 'go', 'xiangqi'])
-const AI_TIMEOUT_MS = 20000
+/** 该模型是推理模型，不关掉会烧掉上万 token 并把延迟拉到 20 秒以上 */
+const AI_REASONING_EFFORT = 'none'
+const AI_TIMEOUT_MS = 30000
 /** 换模型只需改这里 */
-const AI_MODEL = '@cf-workers/arena-llm/llama-3-1-70b'
+const AI_MODEL = 'sensenova-6.8-flash-lite'
 /** 游客额度归属前缀：同一设备 ID 一天共享一个额度 */
 const AI_GUEST_PREFIX = 'guest:'
 /** 设备 ID 格式：客户端 16 字节随机数转十六进制 */
@@ -586,11 +571,11 @@ app.get('/api/admin/debug', requireAuth, requireAdmin, async (c) => {
     resendKey: Boolean(c.env.RESEND_API_KEY) ? 'configured' : 'NOT_SET',
     adminEmail: c.env.ADMIN_EMAIL ?? 'NOT_SET',
     mailFrom: c.env.MAIL_FROM ?? 'default',
-    workersAi: c.env.AI ? 'available' : 'NOT_ENABLED',
+    aiProvider:
+      c.env.AI_BASE_URL && c.env.AI_API_KEY ? 'configured' : 'NOT_CONFIGURED',
     turnstile:
       c.env.TURNSTILE_SECRET && c.env.TURNSTILE_SITE_KEY ? 'configured' : 'NOT_CONFIGURED',
     aiModel: AI_MODEL,
-    aiDailyLimit: AI_DAILY_LIMIT,
     workerVersion: process.env.WORKER_VERSION ?? 'unknown',
   })
 })
@@ -912,26 +897,45 @@ function parseAiCandidates(raw: string, legal: Set<string>, want: number): strin
   }
 }
 
-/** 读当日已用 AI 步数（只读，不计数） */
-async function readAiUsage(db: D1Database, userId: string): Promise<number> {
-  const today = new Date().toISOString().slice(0, 10)
-  const row = await db
-    .prepare('SELECT used FROM ai_usage WHERE user_id = ? AND date = ?')
-    .bind(userId, today)
-    .first<{ used: number }>()
-  return row?.used ?? 0
-}
-
-/** 成功调用一次 Workers AI 后 +1 */
-async function incAiUsage(db: D1Database, userId: string): Promise<void> {
-  const today = new Date().toISOString().slice(0, 10)
-  await db
-    .prepare(
-      `INSERT INTO ai_usage (user_id, date, used) VALUES (?, ?, 1)
-       ON CONFLICT(user_id, date) DO UPDATE SET used = used + 1`,
-    )
-    .bind(userId, today)
-    .run()
+/**
+ * 调用 AI 服务（OpenAI 兼容 chat/completions）。
+ * 返回模型正文；HTTP 非 2xx 时把错误信息带回来，便于在日志里定位。
+ */
+async function askAiModel(
+  baseUrl: string,
+  apiKey: string,
+  prompt: string,
+  temperature: number,
+): Promise<string | null> {
+  const url = baseUrl.replace(/\/+$/, '') + '/chat/completions'
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: AI_MODEL,
+      temperature,
+      max_tokens: 256,
+      // 推理模型不关掉会用光 token 预算、延迟 20 秒以上
+      reasoning_effort: AI_REASONING_EFFORT,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+    signal: AbortSignal.timeout(AI_TIMEOUT_MS),
+  })
+  const data = (await res.json().catch(() => null)) as
+    | {
+        choices?: Array<{ message?: { content?: unknown; reasoning?: unknown } }>
+        error?: unknown
+      }
+    | null
+  if (!res.ok) {
+    console.warn(`ai http ${res.status}:`, JSON.stringify(data?.error ?? data).slice(0, 300))
+    return null
+  }
+  const content = data?.choices?.[0]?.message?.content
+  return typeof content === 'string' ? content : null
 }
 
 /** 公开站点配置：客户端据此决定是否渲染 Turnstile */
@@ -940,7 +944,7 @@ app.get('/api/config', async (c) => {
 })
 
 /**
- * AI 候选走法。无需登录：登录账号凭 Cookie 记账，游客凭 deviceId + Turnstile 记账，额度相同。
+ * AI 候选走法。无需登录：登录账号凭 Cookie 放行，游客凭 deviceId + Turnstile 放行，无步数上限。
  * 任何异常都返回 engine:'local'，由客户端回落本地 AI，保证对局永不卡住。
  */
 app.post('/api/ai/move', async (c) => {
@@ -970,25 +974,16 @@ app.post('/api/ai/move', async (c) => {
         ? { id: AI_GUEST_PREFIX + deviceId.toLowerCase(), identity: 'guest' }
         : null
 
-  const limit = AI_DAILY_LIMIT
   const identity = owner ? owner.identity : 'none'
-  const reply = (engine: 'cf' | 'local', candidates: string[], used: number): Response =>
-    c.json({
-      ok: true,
-      engine,
-      candidates,
-      model: AI_MODEL,
-      aiUsedToday: used,
-      aiLimit: limit,
-      identity,
-    })
+  const reply = (engine: 'cf' | 'local', candidates: string[]): Response =>
+    c.json({ ok: true, engine, candidates, model: AI_MODEL, identity })
 
-  const used = owner ? await readAiUsage(c.env.DB, owner.id) : 0
-  const ai = c.env.AI
+  const baseUrl = (c.env.AI_BASE_URL ?? '').trim()
+  const apiKey = (c.env.AI_API_KEY ?? '').trim()
 
-  if (!owner || !ai) {
-    // 身份无法识别，或账号未开通 Workers AI：回落本地，不计费
-    return reply('local', [], used)
+  if (!owner || !baseUrl || !apiKey) {
+    // 身份无法识别，或 AI 服务未配置：回落本地，不产生费用
+    return reply('local', [])
   }
 
   // 游客必须过 Turnstile；secret 未配置视为站点未启用，游客一律回落本地
@@ -1004,12 +999,7 @@ app.post('/api/ai/move', async (c) => {
         turnstileToken,
         c.req.header('CF-Connecting-IP') ?? c.req.header('X-Forwarded-For') ?? '',
       ))
-    if (!passed) return reply('local', [], used)
-  }
-
-  if (used >= limit) {
-    // 当日额度用尽：回落本地 AI
-    return reply('local', [], used)
+    if (!passed) return reply('local', [])
   }
 
   const want = AI_CANDIDATES[level]
@@ -1021,39 +1011,22 @@ app.post('/api/ai/move', async (c) => {
     `合法走法清单（只能从这里原样挑选，不得新增、不得改写）：\n${show.join('\n')}\n\n` +
     `要求：只输出一个 JSON 数组，元素为走法字符串，数量 ${want}，无多余文字。例如 ["e2e4"]`
 
-  let raw = ''
+  let raw: string | null
   try {
-    const res = await ai.run(
-      AI_MODEL,
-      { messages: [{ role: 'user', content: prompt }] },
-      {
-        temperature: AI_TEMPERATURE[level],
-        max_tokens: 256,
-        stream: false,
-        abortSignal: AbortSignal.timeout(AI_TIMEOUT_MS),
-      },
-    )
-    // Workers AI 返回 { response: '...' } 对象；个别模型直接返回字符串
-    if (typeof res === 'string') {
-      raw = res
-    } else if (res && typeof res === 'object' && typeof (res as { response?: unknown }).response === 'string') {
-      raw = (res as { response: string }).response
-    } else {
-      raw = JSON.stringify(res)
-    }
+    raw = await askAiModel(baseUrl, apiKey, prompt, AI_TEMPERATURE[level])
   } catch (err) {
-    // LLM 调用失败（含超时）：回落本地，本次不计费
-    console.warn('ai.run failed:', err)
-    return reply('local', [], used)
+    // 调用失败（含超时）：回落本地
+    console.warn('ai request failed:', err)
+    return reply('local', [])
   }
+  if (raw === null) return reply('local', [])
 
   const candidates = parseAiCandidates(raw, legalSet, want)
   if (candidates.length === 0) {
-    // 输出里没有一个合法候选：回落本地，本次不计费
-    return reply('local', [], used)
+    // 输出里没有一个合法候选：回落本地
+    return reply('local', [])
   }
-  await incAiUsage(c.env.DB, owner.id)
-  return reply('cf', candidates, used + 1)
+  return reply('cf', candidates)
 })
 
 // ---------- 管理员网盘 ----------

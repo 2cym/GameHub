@@ -36,7 +36,7 @@ async function turnstileSiteKey(): Promise<string | null> {
 
 export interface AiEngineResult<T> {
   move: T | null
-  /** cf = 采用了 Workers AI 的候选；local = 走了本地 AI */
+  /** cf = 采用了 AI 模型的候选；local = 走了本地 AI */
   engine: 'cf' | 'local'
 }
 
@@ -64,8 +64,8 @@ export interface AiEngineOptions<T> {
 /**
  * 取一步 AI 走法：
  * - 简单：等一小会儿走本地 AI，不产生费用；
- * - 中等/困难：请求 Workers AI 候选，本地搜索精筛；
- * - 游客需先过 Turnstile；额度、超时、LLM 无合法输出等任何失败都回落本地 AI，保证对局不中断。
+ * - 中等/困难：请求 AI 模型候选，本地搜索精筛；
+ * - 游客需先过 Turnstile；超时、模型无合法输出等任何失败都回落本地 AI，保证对局不中断。
  */
 export async function aiEngineMove<T>(opts: AiEngineOptions<T>): Promise<AiEngineResult<T>> {
   const { game, level, legal, side, search, local } = opts

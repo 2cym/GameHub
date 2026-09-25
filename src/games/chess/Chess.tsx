@@ -238,8 +238,8 @@ export default function Chess({ onGameOver }: GameProps) {
           <span className={shared.hudValue}>
             {DIFFS.find((d) => d.id === difficulty)?.label}
             {difficulty !== 'easy' && aiSrc === 'cf' && (
-              <span className={shared.aiTag} title="本手由 Cloudflare Workers AI 生成候选">
-                · CF
+              <span className={shared.aiTag} title="本手由 AI 模型生成候选">
+                · AI
               </span>
             )}
           </span>
@@ -314,7 +314,7 @@ export default function Chess({ onGameOver }: GameProps) {
           </div>
           <p className={styles.tip}>
             点选己方棋子，绿点为可落子位置。将死对方王即胜。
-            中等/困难由 Cloudflare AI 生成候选（游客需人机验证，失败自动回落本地）。
+            中等/困难由 AI 生成候选（游客需人机验证，失败自动回落本地）。
           </p>
         </div>
       </div>

@@ -119,7 +119,7 @@ export default function Go({ onGameOver }: GameProps) {
     if (statusRef.current !== 'running') return
     const runId = ++aiRunId.current
     setThinking(true)
-    // 全部合法落子点（排除劫点），供 Workers AI 从中挑选
+    // 全部合法落子点（排除劫点），供 AI 模型从中挑选
     const b = boardRef.current
     const ko = koRef.current
     const legal = candidates(b)
@@ -233,8 +233,8 @@ export default function Go({ onGameOver }: GameProps) {
           <span className={shared.hudValue}>
             {DIFFS.find((d) => d.id === difficulty)?.label}
             {difficulty !== 'easy' && aiSrc === 'cf' && (
-              <span className={shared.aiTag} title="本手由 Cloudflare Workers AI 生成候选">
-                · CF
+              <span className={shared.aiTag} title="本手由 AI 模型生成候选">
+                · AI
               </span>
             )}
           </span>
@@ -339,7 +339,7 @@ export default function Go({ onGameOver }: GameProps) {
           </button>
           <p className={styles.tip}>
             落子围地提子。连续两次虚手即终局数目。黑贴白 6.5 目。
-            中等/困难由 Cloudflare AI 生成候选（游客需人机验证，失败自动回落本地）。
+            中等/困难由 AI 生成候选（游客需人机验证，失败自动回落本地）。
           </p>
         </div>
       </div>

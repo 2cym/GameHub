@@ -165,8 +165,8 @@ export const GAMES: GameMeta[] = [
     name: '五子棋',
     emoji: '⚫',
     category: '棋类',
-    description: '15×15 五子连珠，黑白交替，中等/困难由 Cloudflare AI 对弈。',
-    howToPlay: '点击棋盘交点落子，黑先白后，在横、竖、斜任意方向连成五子即胜。可选难度与先后手，中等/困难难度由 Cloudflare AI 生成候选走法。',
+    description: '15×15 五子连珠，黑白交替，中等/困难由 AI 对弈。',
+    howToPlay: '点击棋盘交点落子，黑先白后，在横、竖、斜任意方向连成五子即胜。可选难度与先后手，中等/困难难度由 AI 生成候选走法。',
     controls: [
       { keys: '点击', label: '落子' },
     ],
@@ -178,7 +178,7 @@ export const GAMES: GameMeta[] = [
     name: '中国象棋',
     emoji: '帥',
     category: '棋类',
-    description: '完整走法，蹩马腿/塞象眼/白脸将，中等/困难由 Cloudflare AI 对弈。',
+    description: '完整走法，蹩马腿/塞象眼/白脸将，中等/困难由 AI 对弈。',
     howToPlay: '红先黑后，点选己方棋子后点击绿点落子。车直走、马走日（蹩马腿）、象走田（塞象眼、不过河）、炮隔山吃、兵过河可横。吃掉对方将/帅即胜。',
     controls: [
       { keys: '点击', label: '选子 / 落子' },
@@ -191,7 +191,7 @@ export const GAMES: GameMeta[] = [
     name: '国际象棋',
     emoji: '♔',
     category: '棋类',
-    description: '六种棋子完整规则，含王车易位、吃过路兵、兵升变，中等/困难由 Cloudflare AI 对弈。',
+    description: '六种棋子完整规则，含王车易位、吃过路兵、兵升变，中等/困难由 AI 对弈。',
     howToPlay: '白先黑后，点选己方棋子后点击绿点落子。含王车易位、吃过路兵、兵到底线自动升变为后。将死对方王即胜。',
     controls: [
       { keys: '点击', label: '选子 / 落子' },
@@ -204,7 +204,7 @@ export const GAMES: GameMeta[] = [
     name: '围棋',
     emoji: '⚫',
     category: '棋类',
-    description: '19×19 棋盘，提子、打劫、数目，中等/困难由 Cloudflare AI 对弈。',
+    description: '19×19 棋盘，提子、打劫、数目，中等/困难由 AI 对弈。',
     howToPlay: '黑先白后，点击交叉点落子。无气则被提子，打劫不可立即回提。双方连续虚手即终局数目，黑贴白 6.5 目。围地多者胜。',
     controls: [
       { keys: '点击', label: '落子' },

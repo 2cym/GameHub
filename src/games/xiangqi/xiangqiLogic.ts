@@ -396,7 +396,7 @@ export function aiMove(
   return best[Math.floor(Math.random() * best.length)]
 }
 
-// ===== 走法文本序列化（供 Workers AI 候选交换） =====
+// ===== 走法文本序列化（供 AI 模型 候选交换） =====
 
 /** Move → "从格-到格"，如 30-39 */
 export function moveToText(m: Move): string {
@@ -404,7 +404,7 @@ export function moveToText(m: Move): string {
 }
 
 /**
- * 在给定候选集合内做 α-β 搜索选最优（Workers AI 粗筛后本地精筛）。
+ * 在给定候选集合内做 α-β 搜索选最优（AI 模型 粗筛后本地精筛）。
  * 候选为空返回 null。
  */
 export function bestOf(
