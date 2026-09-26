@@ -15,10 +15,11 @@
     }
   ],
   // Cloudflare Workers AI：仅在后台把 AI 提供方切到 cloudflare 时才使用。
-  // 需在 Cloudflare 控制台 Workers & Pages → Workers AI 开通，否则该提供方自动回落本地 AI。
+  // 绑定名必须与控制台一致（控制台建的是 CYM，不是 AI）；
+  // 代码里同时兼容 env.CYM / env.AI，改名不会让提供方悄悄失效。
+  // 未开通或部署后 env 里没有该绑定 → 自动回落本地 AI。
   "ai": {
-    "binding": "AI",
-    "type": "workers-ai"
+    "binding": "CYM"
   },
   "vars": {
     // 发件人；RESEND_API_KEY 走 npx wrangler secret put，不写入本文件

@@ -27,7 +27,14 @@ export interface Env {
   TURNSTILE_SITE_KEY?: string
   TURNSTILE_SECRET?: string
   /** Cloudflare Workers AI 内建绑定（wrangler.jsonc 的 ai binding）；后台切到 cloudflare 时才用 */
+  CYM?: unknown
+  /** 兼容旧的绑定名，改名不必同步改代码 */
   AI?: unknown
+}
+
+/** Workers AI 绑定在两个候选名上查找，避免控制台改名后提供方静默失效。 */
+function getWorkersAi(env: Env): unknown {
+  return env.CYM ?? env.AI
 }
 
 interface AuthUser {
@@ -189,7 +196,7 @@ function aiCapabilities(env: Env): {
       configured: Boolean((env.AI_BASE_URL ?? '').trim() && (env.AI_API_KEY ?? '').trim()),
       baseUrl: env.AI_BASE_URL ?? '',
     },
-    cloudflare: { available: typeof (env.AI as { run?: unknown })?.run === 'function' },
+    cloudflare: { available: typeof (getWorkersAi(env) as { run?: unknown })?.run === 'function' },
   }
 }
 
@@ -1171,7 +1178,7 @@ app.post('/api/ai/move', async (c) => {
   let raw: string | null
   try {
     raw = settings.provider === 'cloudflare'
-      ? await askWorkersAi(c.env.AI, settings.cfModel, prompt, temperature)
+      ? await askWorkersAi(getWorkersAi(c.env), settings.cfModel, prompt, temperature)
       : await askApiModel(
           (c.env.AI_BASE_URL ?? '').trim(),
           (c.env.AI_API_KEY ?? '').trim(),
@@ -1272,7 +1279,7 @@ app.post('/api/admin/settings/ai/test', requireAuth, requireAdmin, async (c) => 
   let raw: string | null
   try {
     if (provider === 'cloudflare') {
-      raw = await askWorkersAi(c.env.AI, cfModel, AI_TEST_PROMPT, temperature)
+      raw = await askWorkersAi(getWorkersAi(c.env), cfModel, AI_TEST_PROMPT, temperature)
     } else if (provider === 'off') {
       return c.json({ ok: false, provider, model: modelId, error: '当前提供方已关闭，未发起调用' })
     } else {
