@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { adminApi, aiSettingsApi, fileApi, messageApi, type AiProvider, type AiSettingsResponse, type AiTestResult, type AdminAnalytics, type AdminDebug, type AdminStats, type AdminUserDetail, type AdminUserRow, type FileRow, type MessageRow, type StorageInfo } from '../lib/api'
 import { useAuth } from '../stores/auth'
@@ -327,8 +327,10 @@ function AiSettingsTab() {
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<AiTestResult | null>(null)
+  const [loadError, setLoadError] = useState('')
 
-  useEffect(() => {
+  const reload = useCallback(() => {
+    setLoadError('')
     aiSettingsApi
       .get()
       .then((r) => {
@@ -338,10 +340,23 @@ function AiSettingsTab() {
         setCfModel(r.settings.cfModel)
         setReasoning(r.settings.reasoning)
       })
-      .catch(() => toast('加载 AI 设置失败', 'error'))
-  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+      // 带上后端返回的原因，否则只有「加载失败」四字无从下手
+      .catch((e: unknown) => setLoadError(e instanceof Error ? e.message : '加载 AI 设置失败'))
+  }, [])
+
+  useEffect(() => {
+    reload()
+  }, [reload])
 
   if (!data) {
+    if (loadError) {
+      return (
+        <div style={{ textAlign: 'center', padding: '40px 16px' }}>
+          <p style={{ margin: '0 0 12px', color: 'var(--danger)' }}>{loadError}</p>
+          <button className={styles.actionBtn} onClick={reload}>重试</button>
+        </div>
+      )
+    }
     return <div className={styles.loading}><span className={styles.spinner} /> 加载中…</div>
   }
 

@@ -160,10 +160,17 @@ function modelTemperature(id: string, list: AiModelInfo[], fallback: number): nu
  * 表很小（只有 4 行），整表读取避免 IN(...) 绑定的兼容性问题。
  */
 async function loadAiSettings(db: D1Database): Promise<AiSettings> {
-  const { results } = await db
-    .prepare('SELECT key, value FROM site_settings')
-    .all<{ key: string; value: string }>()
-  const map = new Map(results.map((r) => [r.key, r.value]))
+  let map: Map<string, string>
+  try {
+    // site_settings 是后加的表：旧库尚未跑过 migrate.sql 时会 SQLITE_ERROR。
+    // 读不到就当「未配置」处理，回落默认值 —— 不能让它把 /api/ai/move 一起搞成 500。
+    const { results } = await db
+      .prepare('SELECT key, value FROM site_settings')
+      .all<{ key: string; value: string }>()
+    map = new Map(results.map((r) => [r.key, r.value]))
+  } catch {
+    return DEFAULT_AI_SETTINGS
+  }
   return {
     provider: pickProvider(map.get(SETTING_KEYS.provider)),
     apiModel: pickModel(AI_API_MODELS, map.get(SETTING_KEYS.apiModel), DEFAULT_AI_SETTINGS.apiModel),
