@@ -106,11 +106,12 @@ const AI_API_MODELS: AiModelInfo[] = [
 ]
 
 /** Workers AI 可选模型；需先在 Cloudflare 控制台开通 Workers AI */
+/** Workers AI 模型 ID 逐一按官方目录核对（developers.cloudflare.com/workers-ai/models）：
+ *  老版 Llama 3 / 3.1 / 3.3 纯 instruct 均已下架，只剩量化变体。写错 ID 平台会直接报 model not found。 */
 const AI_CF_MODELS: AiModelInfo[] = [
-  { id: '@cf/meta/llama-3.3-70b-instruct', label: 'Llama 3.3 70B Instruct', desc: 'Workers AI 当前旗舰 70B' },
-  { id: '@cf/meta/llama-3.1-70b-instruct', label: 'Llama 3.1 70B Instruct', desc: '70B，早于 3.3 的稳定版本' },
-  { id: '@cf/meta/llama-3.2-3b-instruct', label: 'Llama 3.2 3B Instruct', desc: '小模型，冷启动快、额度消耗最低，适合对局实时性' },
-  { id: '@cf/meta/llama-3.1-8b-instruct', label: 'Llama 3.1 8B Instruct', desc: '轻量，速度与质量的折中' },
+  { id: '@cf/meta/llama-3.2-3b-instruct', label: 'Llama 3.2 3B Instruct', desc: '3B，响应快、额度消耗最低，适合对局实时性' },
+  { id: '@cf/meta/llama-3.1-8b-instruct-fp8', label: 'Llama 3.1 8B Instruct FP8', desc: '8B 量化版，速度与质量的折中' },
+  { id: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', label: 'Llama 3.3 70B FP8 Fast', desc: '当前最强 70B，质量最好但响应最慢、额度消耗最高' },
 ]
 /** 游客额度归属前缀：同一设备 ID 一天共享一个额度 */
 const AI_GUEST_PREFIX = 'guest:'
@@ -148,7 +149,7 @@ interface AiSettings {
 const DEFAULT_AI_SETTINGS: AiSettings = {
   provider: 'api',
   apiModel: 'sensenova-6.8-flash-lite',
-  cfModel: '@cf/meta/llama-3.3-70b-instruct',
+  cfModel: '@cf/meta/llama-3.2-3b-instruct',
   reasoning: false,
 }
 
