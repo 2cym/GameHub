@@ -1087,11 +1087,27 @@ async function askApiModel(
 }
 
 interface WorkersAiBinding {
-  run: (model: string, data: unknown, signal?: AbortSignal) => Promise<{ json(): Promise<unknown> }>
+  run: (model: string, data: unknown, options?: Record<string, unknown>) => Promise<unknown>
+}
+
+/** 调用超时。Workers AI 的 run() 不支持 signal 参数——第三个参数只能是配置对象
+ *  （官方文档示例 { queueRequest: true } / { stream: true }），传 AbortSignal 会让它
+ *  把请求当成 options 解析并返回非 Response 对象，表现为 "res.json is not a function"。
+ *  所以超时只能在外面用 Promise.race 兜。 */
+async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: number | undefined
+  const fail = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} 超时（${ms}ms）`)), ms)
+  })
+  try {
+    return await Promise.race([p, fail])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
 }
 
 /** 调用 Workers AI 内建绑定。未开通 Workers AI 时 run 不存在，返回 null 由上层回落本地。
- *  额度超限 / 模型已下架 / 账号未设支出上限等情况会抛异常，由调用方决定是回落还是上报。 */
+ *  额度超限 / 模型已下架等情况会抛异常，由调用方决定是回落还是上报。 */
 async function askWorkersAi(
   ai: unknown,
   model: string,
@@ -1100,12 +1116,19 @@ async function askWorkersAi(
 ): Promise<string | null> {
   const runner = (ai ?? {}) as Partial<WorkersAiBinding>
   if (typeof runner.run !== 'function') return null
-  const res = await runner.run(model, {
-    messages: [{ role: 'user', content: prompt }],
-    temperature,
-    max_tokens: AI_MAX_TOKENS,
-  }, AbortSignal.timeout(AI_WORKERS_AI_TIMEOUT_MS))
-  const data = (await res.json()) as { content?: Array<{ text?: unknown }> } | null
+  const res = await withTimeout(
+    runner.run(model, {
+      messages: [{ role: 'user', content: prompt }],
+      temperature,
+      max_tokens: AI_MAX_TOKENS,
+    }),
+    AI_WORKERS_AI_TIMEOUT_MS,
+    'Workers AI',
+  )
+  // run() 在流式 / batch 模式下可能直接返回已解析的对象而不是 Response，两种都接
+  const data = (typeof (res as { json?: unknown }).json === 'function'
+    ? await (res as { json(): Promise<unknown> }).json()
+    : (res as unknown)) as { content?: Array<{ text?: unknown }> } | null
   const text = data?.content?.[0]?.text
   return typeof text === 'string' ? text : null
 }
