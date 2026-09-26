@@ -88,14 +88,16 @@ export async function verifyToken(
   const parts = token.split('.')
   if (parts.length !== 3) return null
   const [header, body, sig] = parts
-  const ok = await crypto.subtle.verify(
-    'HMAC',
-    await hmacKey(secret),
-    b64urlDecode(sig),
-    encoder.encode(`${header}.${body}`),
-  )
-  if (!ok) return null
   try {
+    // b64urlDecode 对畸形字符会抛异常，必须纳入 catch：
+    // 否则伪造/损坏的 Cookie 会让 verifyToken 抛错、把 401 变成 500
+    const ok = await crypto.subtle.verify(
+      'HMAC',
+      await hmacKey(secret),
+      b64urlDecode(sig),
+      encoder.encode(`${header}.${body}`),
+    )
+    if (!ok) return null
     const payload = JSON.parse(new TextDecoder().decode(b64urlDecode(body)))
     if (
       typeof payload.uid !== 'string' ||
