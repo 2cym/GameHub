@@ -300,6 +300,7 @@ export interface AiTestResult {
   parsed?: string[]
   raw?: string
   error?: string
+  hint?: string
 }
 
 export const aiSettingsApi = {

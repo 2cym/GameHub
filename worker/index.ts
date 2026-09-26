@@ -85,6 +85,8 @@ const AI_MAX_TOKENS_REASONING = 4000
 /** 请求超时：关闭推理只需 1–4 秒，开启推理可能先想几十秒 */
 const AI_TIMEOUT_MS = 30000
 const AI_REASONING_TIMEOUT_MS = 90000
+// Workers AI 没有自己的超时参数，且 70B 冷加载可能很慢；给足余量但不拖到 Workers 请求上限
+const AI_WORKERS_AI_TIMEOUT_MS = 90000
 
 /** 可切换的模型及其元数据。temp 为该模型的强制 temperature（该模型拒绝非 1 的值）。 */
 interface AiModelInfo {
@@ -105,9 +107,10 @@ const AI_API_MODELS: AiModelInfo[] = [
 
 /** Workers AI 可选模型；需先在 Cloudflare 控制台开通 Workers AI */
 const AI_CF_MODELS: AiModelInfo[] = [
-  { id: '@cf/meta/llama-3.3-70b-instruct', label: 'Llama 3.3 70B Instruct', desc: 'Workers AI 旗舰' },
-  { id: '@cf/meta/llama-3-70b-instruct', label: 'Llama 3 70B Instruct', desc: 'Workers AI 经典大模型' },
-  { id: '@cf/meta/llama-3.1-8b-instruct', label: 'Llama 3.1 8B Instruct', desc: 'Workers AI 轻量' },
+  { id: '@cf/meta/llama-3.3-70b-instruct', label: 'Llama 3.3 70B Instruct', desc: 'Workers AI 当前旗舰 70B' },
+  { id: '@cf/meta/llama-3.1-70b-instruct', label: 'Llama 3.1 70B Instruct', desc: '70B，早于 3.3 的稳定版本' },
+  { id: '@cf/meta/llama-3.2-3b-instruct', label: 'Llama 3.2 3B Instruct', desc: '小模型，冷启动快、额度消耗最低，适合对局实时性' },
+  { id: '@cf/meta/llama-3.1-8b-instruct', label: 'Llama 3.1 8B Instruct', desc: '轻量，速度与质量的折中' },
 ]
 /** 游客额度归属前缀：同一设备 ID 一天共享一个额度 */
 const AI_GUEST_PREFIX = 'guest:'
@@ -1083,10 +1086,11 @@ async function askApiModel(
 }
 
 interface WorkersAiBinding {
-  run: (model: string, data: unknown) => Promise<{ json(): Promise<unknown> }>
+  run: (model: string, data: unknown, signal?: AbortSignal) => Promise<{ json(): Promise<unknown> }>
 }
 
-/** 调用 Workers AI 内建绑定。未开通 Workers AI 时 run 不存在，返回 null 由上层回落本地。 */
+/** 调用 Workers AI 内建绑定。未开通 Workers AI 时 run 不存在，返回 null 由上层回落本地。
+ *  额度超限 / 模型已下架 / 账号未设支出上限等情况会抛异常，由调用方决定是回落还是上报。 */
 async function askWorkersAi(
   ai: unknown,
   model: string,
@@ -1099,7 +1103,7 @@ async function askWorkersAi(
     messages: [{ role: 'user', content: prompt }],
     temperature,
     max_tokens: AI_MAX_TOKENS,
-  })
+  }, AbortSignal.timeout(AI_WORKERS_AI_TIMEOUT_MS))
   const data = (await res.json()) as { content?: Array<{ text?: unknown }> } | null
   const text = data?.content?.[0]?.text
   return typeof text === 'string' ? text : null
@@ -1294,12 +1298,21 @@ app.post('/api/admin/settings/ai/test', requireAuth, requireAdmin, async (c) => 
       raw = await askApiModel(baseUrl, apiKey, apiModel, AI_TEST_PROMPT, temperature, reasoning)
     }
   } catch (err) {
+    // 必须把平台原话带回来：额度超限、模型已下架、账号未设支出上限，
+    // 现象都是「调用失败」，只有原始信息能区分
     console.warn('ai test failed:', err)
-    return c.json({ ok: false, provider, model: modelId, error: '调用失败或超时' })
+    const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+    return c.json({ ok: false, provider, model: modelId, error: `调用失败：${detail.slice(0, 300)}` })
   }
 
   if (raw === null) {
-    return c.json({ ok: false, provider, model: modelId, error: '模型返回空正文或 HTTP 错误' })
+    return c.json({
+      ok: false, provider, model: modelId,
+      error: '模型返回空正文或 HTTP 错误',
+      hint: provider === 'cloudflare'
+        ? '若模型可用仍返回空，检查 Workers AI 是否设置了支出上限（Workers & Pages → AI → 账单）'
+        : undefined,
+    })
   }
   const parsed = parseAiCandidates(raw, new Set(AI_TEST_LEGAL_MOVES), 3)
   return c.json({

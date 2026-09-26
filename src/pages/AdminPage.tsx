@@ -336,8 +336,12 @@ function AiSettingsTab() {
       .then((r) => {
         setData(r)
         setProvider(r.settings.provider)
-        setApiModel(r.settings.apiModel)
-        setCfModel(r.settings.cfModel)
+        // 目录可能已更新（模型下架），存过的值可能不在选项里 —— 回落到第一项，
+        // 否则 <select> 会渲染成空白，看起来像页面坏了
+        setApiModel(r.apiModels.some((m) => m.id === r.settings.apiModel)
+          ? r.settings.apiModel : r.apiModels[0]?.id ?? '')
+        setCfModel(r.cfModels.some((m) => m.id === r.settings.cfModel)
+          ? r.settings.cfModel : r.cfModels[0]?.id ?? '')
         setReasoning(r.settings.reasoning)
       })
       // 带上后端返回的原因，否则只有「加载失败」四字无从下手
@@ -504,6 +508,9 @@ function AiSettingsTab() {
               <div className="font-mono">{JSON.stringify(testResult.parsed)}</div>
             )}
             {!testResult.ok && testResult.error && <div>{testResult.error}</div>}
+            {!testResult.ok && testResult.hint && (
+              <div style={{ opacity: 0.75, marginTop: 4 }}>提示：{testResult.hint}</div>
+            )}
             {testResult.raw && <pre className={styles.testRaw}>{testResult.raw}</pre>}
           </div>
         )}
