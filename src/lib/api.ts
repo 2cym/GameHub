@@ -346,7 +346,8 @@ export interface AiSettings {
 }
 
 export interface AiCapabilities {
-  api: { configured: boolean; baseUrl: string }
+  /** urlOk：配置的出站地址是否通过服务端 https/公网校验。false 表示请求会被拒绝 */
+  api: { configured: boolean; baseUrl: string; urlOk: boolean }
   cloudflare: { available: boolean }
 }
 

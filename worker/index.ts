@@ -14,6 +14,7 @@ import {
 } from './auth'
 import { HTTPError, badRequest } from './errors'
 import { emailServiceReady, sendMail, verificationEmailHtml } from './email'
+import { assertPublicHttpsUrl, isPublicHttpsUrl } from './urlGuard'
 import { issueCode, verifyCode, deleteCode } from './verification'
 
 export interface Env {
@@ -149,6 +150,15 @@ interface AiModelInfo {
 
 /** OpenAI 兼容接口可选模型；延迟为 2026-09 实测值，仅供后台展示参考 */
 const AI_API_MODELS: AiModelInfo[] = [
+  // —— ollama.com 网关（AI_BASE_URL=https://ollama.com/v1），2026-09-27 实测 ——
+  // 四个免费档模型，均验证过能返回合法 JSON 数组。同一账号下 gpt-oss:20b / gpt-oss:120b
+  // 返回 200 但正文恒为空，glm/kimi/minimax/deepseek/mistral 全系返回 402（需充值），
+  // 所以都不放进列表——放进来就是给用户一个必然失败的选项。
+  { id: 'nemotron-3-nano:30b', label: 'Nemotron 3 Nano 30B', desc: 'Ollama 免费档，30B，实测约 0.75 秒' },
+  { id: 'gemma4:31b', label: 'Gemma 4 31B', desc: 'Ollama 免费档，Google 31B，实测约 0.8 秒' },
+  { id: 'nemotron-3-super', label: 'Nemotron 3 Super', desc: 'Ollama 免费档，能力更强，实测约 1.1 秒' },
+  { id: 'nemotron-3-ultra', label: 'Nemotron 3 Ultra', desc: 'Ollama 免费档，本组最强，实测约 1.4 秒' },
+  // —— sensenova 网关（AI_BASE_URL 指向 token.sensenova.cn/v1 时可选）——
   { id: 'sensenova-6.8-flash-lite', label: 'SenseNova 6.8 Flash Lite', desc: '轻量高效多模态智能体，关推理实测约 1–2.5 秒' },
   { id: 'deepseek-flash', label: 'DeepSeek V4.1 Flash', desc: '新一代高效通用，关推理实测约 0.9 秒' },
   { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', desc: '高效经济型通用，关推理实测约 1.3 秒' },
@@ -199,7 +209,9 @@ interface AiSettings {
 /** 默认设置。AI 凭据缺失时 /api/ai/move 会自动回落本地 AI，不会影响对局 */
 const DEFAULT_AI_SETTINGS: AiSettings = {
   provider: 'api',
-  apiModel: 'sensenova-6.8-flash-lite',
+  // 默认模型必须和 wrangler.jsonc 里的 AI_BASE_URL 同一网关，否则首个请求就 404/402。
+  // gemma4:31b 在 ollama.com 免费档实测约 0.8 秒，是能直接跑起来的选项。
+  apiModel: 'gemma4:31b',
   cfModel: '@cf/meta/llama-3.2-3b-instruct',
   reasoning: false,
 }
@@ -243,13 +255,17 @@ async function loadAiSettings(db: D1Database): Promise<AiSettings> {
 
 /** 探测两个提供方当前是否真的可用，供后台展示灰显状态 */
 function aiCapabilities(env: Env): {
-  api: { configured: boolean; baseUrl: string }
+  api: { configured: boolean; baseUrl: string; urlOk: boolean }
   cloudflare: { available: boolean }
 } {
+  const baseUrl = (env.AI_BASE_URL ?? '').trim()
+  // configured 只看凭据是否齐全；urlOk 单独标记地址是否过得了出站校验，
+  // 这样后台能把「没填」和「填了内网地址被拒」区分开，而不是两种情况都静默回落到本地 AI
   return {
     api: {
-      configured: Boolean((env.AI_BASE_URL ?? '').trim() && (env.AI_API_KEY ?? '').trim()),
+      configured: Boolean(baseUrl && (env.AI_API_KEY ?? '').trim()),
       baseUrl: env.AI_BASE_URL ?? '',
+      urlOk: baseUrl === '' ? true : isPublicHttpsUrl(baseUrl),
     },
     cloudflare: { available: typeof (getWorkersAi(env) as { run?: unknown })?.run === 'function' },
   }
@@ -1343,6 +1359,8 @@ async function askApiModel(
   reasoning: boolean,
 ): Promise<string | null> {
   const url = baseUrl.replace(/\/+$/, '') + '/chat/completions'
+  // 配置指向了内网或非 https 地址时直接拒绝：这是配置错误而非瞬时失败
+  assertPublicHttpsUrl(url)
   const res = await fetch(url, {
     method: 'POST',
     headers: {

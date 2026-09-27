@@ -416,11 +416,19 @@ function AiSettingsTab() {
           ))}
         </div>
         <div className={styles.capRow}>
-          <span className={`${styles.checkDot} ${data.capabilities.api.configured ? styles.checkDotOk : styles.checkDotFail}`} />
+          <span
+            className={`${styles.checkDot} ${
+              data.capabilities.api.configured && data.capabilities.api.urlOk
+                ? styles.checkDotOk
+                : styles.checkDotFail
+            }`}
+          />
           <span>
-            API 接口{data.capabilities.api.configured
-              ? `：已配置 ${data.capabilities.api.baseUrl}`
-              : '：凭据未配置（AI_BASE_URL / AI_API_KEY）'}
+            {data.capabilities.api.configured
+              ? data.capabilities.api.urlOk
+                ? `API 接口：已配置 ${data.capabilities.api.baseUrl}`
+                : `API 接口：${data.capabilities.api.baseUrl} 被拒绝（需 https 公网地址，不能是内网/本机）`
+              : 'API 接口：凭据未配置（AI_BASE_URL / AI_API_KEY）'}
           </span>
         </div>
         <div className={styles.capRow}>
