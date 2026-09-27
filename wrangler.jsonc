@@ -28,11 +28,7 @@
     // 当前指向 ollama.com 云模型网关；切换网关时必须同时换 DEFAULT_AI_SETTINGS.apiModel，
     // 否则默认模型在新网关上不存在，首个 AI 请求就会失败并静默回落本地 AI
     // 对应密钥走 `npx wrangler secret put AI_API_KEY`，不写入本文件
-    "AI_BASE_URL": "https://ollama.com/v1",
-    // Turnstile 站点密钥（公开值，Cloudflare 控制台 Turnstile 创建后获取）
-    // 留空 = 站点未启用人机验证，游客无法使用 AI（登录账号不受影响）
-    // 对应的密钥走 `npx wrangler secret put TURNSTILE_SECRET`，不写入本文件
-    "TURNSTILE_SITE_KEY": ""
+    "AI_BASE_URL": "https://ollama.com/v1"
   },
   "observability": {
     "enabled": true

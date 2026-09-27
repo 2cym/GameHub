@@ -382,7 +382,7 @@ export default function Go({ onGameOver }: GameProps) {
           </button>
           <p className={styles.tip}>
             落子围地提子。连续两次虚手即终局数目。黑贴白 6.5 目。
-            中等/困难由 AI 生成候选（游客需人机验证，失败自动回落本地）。
+            中等/困难由 AI 生成候选（游客免验证可直接用，失败自动回落本地）。
           </p>
         </div>
       </div>

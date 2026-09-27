@@ -2,7 +2,7 @@ const KEY = 'gamehub_device_id'
 
 /**
  * 游客身份标识：本机持久化的 32 位十六进制随机值。
- * 游客没有账号，AI 请求用它标记身份，配合 Turnstile 校验区分人机。
+ * 游客没有账号，AI 请求用它标记身份。
  * localStorage 不可用（隐私模式等）时退化为会话内随机值。
  */
 export function getDeviceId(): string {

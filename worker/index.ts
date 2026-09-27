@@ -27,9 +27,6 @@ export interface Env {
   AI_BASE_URL?: string
   /** AI 服务密钥，走 `npx wrangler secret put AI_API_KEY`，不写入本文件 */
   AI_API_KEY?: string
-  /** Turnstile site key（公开，客户端用）；SECRET 走 wrangler secret put */
-  TURNSTILE_SITE_KEY?: string
-  TURNSTILE_SECRET?: string
   /** Cloudflare Workers AI 内建绑定（wrangler.jsonc 的 ai binding）；后台切到 cloudflare 时才用 */
   CYM?: unknown
   /** 兼容旧的绑定名，改名不必同步改代码 */
@@ -180,12 +177,6 @@ const AI_GUEST_PREFIX = 'guest:'
 const DEVICE_ID_RE = /^[a-f0-9]{32}$/
 /** 设备 ID 上限，防超大请求体 */
 const DEVICE_ID_MAX = 64
-/** Turnstile token 上限 */
-const TURNSTILE_TOKEN_MAX = 2048
-/** Turnstile 校验服务地址 */
-const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
-/** 校验超时，避免拖慢 AI 请求 */
-const TURNSTILE_TIMEOUT_MS = 5000
 
 // ---------- AI 运行时设置（site_settings 表，管理后台可调） ----------
 
@@ -277,25 +268,6 @@ const AI_GAME_LABEL: Record<string, AiGameName> = {
   gomoku: '五子棋',
   go: '围棋',
   xiangqi: '中国象棋',
-}
-
-/** 校验游客提交的 Turnstile token；secret 是否配置由调用方判断 */
-async function verifyTurnstile(secret: string, token: string, remoteIp: string): Promise<boolean> {
-  try {
-    const res = await fetch(TURNSTILE_VERIFY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body:
-        `secret=${encodeURIComponent(secret)}` +
-        `&response=${encodeURIComponent(token)}` +
-        `&remoteip=${encodeURIComponent(remoteIp)}`,
-      signal: AbortSignal.timeout(TURNSTILE_TIMEOUT_MS),
-    })
-    const data = (await res.json().catch(() => null)) as { success?: boolean } | null
-    return !!data?.success
-  } catch {
-    return false
-  }
 }
 
 async function loadUser(db: D1Database, id: string): Promise<AuthUser | null> {
@@ -952,8 +924,6 @@ app.get('/api/admin/debug', requireAuth, requireAdmin, async (c) => {
     adminEmail: c.env.ADMIN_EMAIL ? 'configured' : 'NOT_SET',
     mailFrom: c.env.MAIL_FROM ?? 'default',
     aiProvider: caps.api.configured ? 'configured' : 'NOT_CONFIGURED',
-    turnstile:
-      c.env.TURNSTILE_SECRET && c.env.TURNSTILE_SITE_KEY ? 'configured' : 'NOT_CONFIGURED',
     aiProviderSetting: settings.provider,
     aiModel: settings.provider === 'cloudflare' ? settings.cfModel : settings.apiModel,
     aiReasoning: settings.reasoning ? 'on' : 'off',
@@ -1503,19 +1473,14 @@ async function askWorkersAiWithFallback(
   return viaRest === null ? res : { text: viaRest, shape: 'rest-response' }
 }
 
-/** 公开站点配置：客户端据此决定是否渲染 Turnstile */
-app.get('/api/config', async (c) => {
-  return c.json({ turnstileSiteKey: c.env.TURNSTILE_SITE_KEY || null })
-})
-
 /**
- * AI 候选走法。无需登录：登录账号凭 Cookie 放行，游客凭 deviceId + Turnstile 放行，无步数上限。
+ * AI 候选走法。无需登录：登录账号凭 Cookie，游客凭 deviceId，两者同等放行、无步数上限。
  * 任何异常都返回 engine:'local'，由客户端回落本地 AI，保证对局永不卡住。
  */
 app.post('/api/ai/move', async (c) => {
   const body = await c.req.json().catch(() => null)
   if (!body) badRequest('请求体格式错误')
-  const { game, level, legalMoves, side, deviceId, turnstileToken } = body as Record<string, unknown>
+  const { game, level, legalMoves, side, deviceId } = body as Record<string, unknown>
 
   if (typeof game !== 'string' || !AI_GAMES.has(game)) badRequest('无效棋种')
   if (level !== 'medium' && level !== 'hard') badRequest('仅支持 medium / hard')
@@ -1555,22 +1520,6 @@ app.post('/api/ai/move', async (c) => {
   if (!owner || settings.provider === 'off') return reply('local', [])
   if (settings.provider === 'api' && !aiCapabilities(c.env).api.configured) {
     return reply('local', [])
-  }
-
-  // 游客必须过 Turnstile；secret 未配置视为站点未启用，游客一律回落本地
-  if (owner.identity === 'guest') {
-    const secret = c.env.TURNSTILE_SECRET ?? ''
-    const passed =
-      secret.length > 0 &&
-      typeof turnstileToken === 'string' &&
-      turnstileToken.length > 0 &&
-      turnstileToken.length <= TURNSTILE_TOKEN_MAX &&
-      (await verifyTurnstile(
-        secret,
-        turnstileToken,
-        c.req.header('CF-Connecting-IP') ?? c.req.header('X-Forwarded-For') ?? '',
-      ))
-    if (!passed) return reply('local', [])
   }
 
   const want = AI_CANDIDATES[level]

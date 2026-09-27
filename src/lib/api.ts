@@ -115,7 +115,6 @@ export interface AdminDebug {
   aiModel: string
   aiReasoning: 'on' | 'off'
   aiWorkersAiAvailable: boolean
-  turnstile: string
 }
 
 export interface AdminAnalytics {
@@ -497,7 +496,7 @@ export interface AiMoveResponse {
 /**
  * 请求 AI 候选走法。
  * legalMoves 由客户端用本地规则算好后传入，服务端只负责喂给模型并过滤非法输出。
- * 登录账号凭 Cookie 放行；游客凭 deviceId + Turnstile token 放行，无步数上限。
+ * 登录账号凭 Cookie，游客凭 deviceId，两者同等放行、无步数上限。
  */
 export const aiApi = {
   move: (
@@ -506,7 +505,6 @@ export const aiApi = {
     legalMoves: string[],
     side: string,
     deviceId: string,
-    turnstileToken?: string,
   ) =>
     post<AiMoveResponse>('/api/ai/move', {
       game,
@@ -514,17 +512,5 @@ export const aiApi = {
       legalMoves,
       side,
       deviceId,
-      turnstileToken,
     }),
-}
-
-// ---------- 站点公开配置 ----------
-
-/** 由服务端下发；turnstileSiteKey 为空表示站点未启用人机验证 */
-export interface PublicConfig {
-  turnstileSiteKey: string | null
-}
-
-export const configApi = {
-  get: () => request<PublicConfig>('/api/config'),
 }

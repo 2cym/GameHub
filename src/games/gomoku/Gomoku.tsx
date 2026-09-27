@@ -307,7 +307,7 @@ export default function Gomoku({ onGameOver }: GameProps) {
           </div>
           <p className={styles.tip}>
             点击棋盘交点落子。形成横、竖、斜任意方向五连即胜。
-            中等/困难由 AI 生成候选（游客需人机验证，失败自动回落本地）。
+            中等/困难由 AI 生成候选（游客免验证可直接用，失败自动回落本地）。
           </p>
         </div>
       </div>

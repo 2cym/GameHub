@@ -361,7 +361,7 @@ export default function Xiangqi({ onGameOver }: GameProps) {
           </div>
           <p className={styles.tip}>
             点选己方棋子，绿点为可落子位置。吃掉对方将/帅即胜。
-            中等/困难由 AI 生成候选（游客需人机验证，失败自动回落本地）。
+            中等/困难由 AI 生成候选（游客免验证可直接用，失败自动回落本地）。
           </p>
         </div>
       </div>
