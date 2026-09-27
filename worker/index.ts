@@ -353,6 +353,9 @@ app.post('/api/auth/email-code', async (c) => {
   const body = await c.req.json().catch(() => null)
   if (!body) badRequest('请求体格式错误')
   const { email, purpose } = (body ?? {}) as Record<string, unknown>
+  // email 来自请求体，最终会进入一条出站到第三方的 HTTP 请求（worker/email.ts）。
+  // 这里只是入口快筛；真正的边界校验在 sendMail 内部（STRICT_EMAIL_RE + 目标 host 白名单），
+  // 收件人只作为 JSON 请求体的字段，不参与 URL 构造，因此不构成 SSRF。
   if (typeof email !== 'string' || !EMAIL_RE.test(email))
     badRequest('邮箱格式不正确')
   if (purpose !== 'register' && purpose !== 'reset')
