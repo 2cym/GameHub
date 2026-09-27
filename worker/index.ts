@@ -30,6 +30,11 @@ export interface Env {
   CYM?: unknown
   /** 兼容旧的绑定名，改名不必同步改代码 */
   AI?: unknown
+  /** Workers AI REST 备用通道的账户 ID（公开标识，非凭据），走 wrangler secret put */
+  AI_REST_ACCOUNT_ID?: string
+  /** Workers AI REST 备用通道的 API token，走 `wrangler secret put AI_REST_TOKEN`，不写入本文件。
+   *  两项都缺省时该通道完全惰性，绑定路径仍是唯一来源。 */
+  AI_REST_TOKEN?: string
 }
 
 /** Workers AI 绑定在两个候选名上查找，避免控制台改名后提供方静默失效。 */
@@ -87,6 +92,8 @@ const AI_TIMEOUT_MS = 30000
 const AI_REASONING_TIMEOUT_MS = 90000
 // Workers AI 没有自己的超时参数，且 70B 冷加载可能很慢；给足余量但不拖到 Workers 请求上限
 const AI_WORKERS_AI_TIMEOUT_MS = 90000
+// REST 备用通道只在绑定返回空正文时才走（那一步本身很快），所以给个更短的窗口，避免两段串行拖过 Workers 请求上限
+const AI_REST_TIMEOUT_MS = 30000
 
 /** 可切换的模型及其元数据。temp 为该模型的强制 temperature（该模型拒绝非 1 的值）。 */
 interface AiModelInfo {
@@ -1106,16 +1113,41 @@ async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise
   }
 }
 
-/** 调用 Workers AI 内建绑定。未开通 Workers AI 时 run 不存在，返回 null 由上层回落本地。
- *  额度超限 / 模型已下架等情况会抛异常，由调用方决定是回落还是上报。 */
+/** Workers AI 调用结果。text 为 null 表示拿到了响应但里面没有可用正文；
+ *  shape 记录响应实际携带的顶层字段名，便于在后台向用户报告真实结构而不是只说「空」。 */
+interface AiResult {
+  text: string | null
+  shape: string
+  error?: string
+}
+
+/** 从 Workers AI / OpenAI 兼容响应里按优先级取第一个可用正文。
+ *  Workers AI 文本生成返回 { response: "..." }（纯字符串字段，不是 content 数组）；
+ *  OpenAI 兼容接口返回 { choices:[{message:{content}}] }，两者都接以免以后切提供方再踩一次。 */
+function extractAiText(data: unknown): AiResult {
+  const obj = (data ?? null) as {
+    response?: unknown
+    content?: Array<{ text?: unknown }>
+    choices?: Array<{ message?: { content?: unknown } }>
+    error?: unknown
+  } | null
+  const shape = obj === null ? 'null' : 'keys=' + Object.keys(obj).join(',')
+  const error = typeof obj?.error === 'string' ? obj.error : undefined
+  const text = [obj?.response, obj?.content?.[0]?.text, obj?.choices?.[0]?.message?.content]
+    .find((v): v is string => typeof v === 'string' && v.trim().length > 0)
+  return { text: text ?? null, shape, error }
+}
+
+/** 调用 Workers AI 内建绑定。未开通 Workers AI 时 run 不存在，返回 binding-missing 由上层回落本地。
+ *  超时 / 额度超限 / 模型已下架等情况会抛异常，由调用方决定是回落还是上报。 */
 async function askWorkersAi(
   ai: unknown,
   model: string,
   prompt: string,
   temperature: number,
-): Promise<string | null> {
+): Promise<AiResult> {
   const runner = (ai ?? {}) as Partial<WorkersAiBinding>
-  if (typeof runner.run !== 'function') return null
+  if (typeof runner.run !== 'function') return { text: null, shape: 'binding-missing' }
   const res = await withTimeout(
     runner.run(model, {
       messages: [{ role: 'user', content: prompt }],
@@ -1126,11 +1158,61 @@ async function askWorkersAi(
     'Workers AI',
   )
   // run() 在流式 / batch 模式下可能直接返回已解析的对象而不是 Response，两种都接
-  const data = (typeof (res as { json?: unknown }).json === 'function'
-    ? await (res as { json(): Promise<unknown> }).json()
-    : (res as unknown)) as { content?: Array<{ text?: unknown }> } | null
-  const text = data?.content?.[0]?.text
-  return typeof text === 'string' ? text : null
+  return extractAiText(
+    typeof (res as { json?: unknown }).json === 'function'
+      ? await (res as { json(): Promise<unknown> }).json()
+      : res,
+  )
+}
+
+/** Workers AI REST 备用通道（/client/v4/accounts/{accountId}/ai/run/{model}）。
+ *  仅在配置了 AI_REST_ACCOUNT_ID + AI_REST_TOKEN 两个密钥时启用，作为绑定路径返回空正文时的兜底。 */
+async function askWorkersAiRest(
+  accountId: string,
+  token: string,
+  model: string,
+  prompt: string,
+  temperature: number,
+): Promise<string | null> {
+  const url = new URL(
+    `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${encodeURIComponent(model)}`,
+  )
+  // accountId 来自配置，但仍在发请求前校验 host，防止拼出意外地址
+  if (url.hostname !== 'api.cloudflare.com') return null
+  const res = await withTimeout(
+    fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: prompt }],
+        temperature,
+        max_tokens: AI_MAX_TOKENS,
+      }),
+    }),
+    AI_REST_TIMEOUT_MS,
+    'Workers AI REST',
+  )
+  if (!res.ok) return null
+  const data = (await res.json()) as { result?: { response?: unknown } } | null
+  const text = data?.result?.response
+  return typeof text === 'string' && text.trim().length > 0 ? text : null
+}
+
+/** 依次尝试内建绑定与 REST 备用通道，返回第一个可用正文。
+ *  绑定路径抛异常（超时 / 额度）时直接向上抛，由调用方回落本地 AI，不在此吞掉。 */
+async function askWorkersAiWithFallback(
+  env: Env,
+  model: string,
+  prompt: string,
+  temperature: number,
+): Promise<AiResult> {
+  const res = await askWorkersAi(getWorkersAi(env), model, prompt, temperature)
+  if (res.text !== null) return res
+  const accountId = (env.AI_REST_ACCOUNT_ID ?? '').trim()
+  const token = (env.AI_REST_TOKEN ?? '').trim()
+  if (!accountId || !token) return res
+  const viaRest = await askWorkersAiRest(accountId, token, model, prompt, temperature)
+  return viaRest === null ? res : { text: viaRest, shape: 'rest-response' }
 }
 
 /** 公开站点配置：客户端据此决定是否渲染 Turnstile */
@@ -1205,16 +1287,18 @@ app.post('/api/ai/move', async (c) => {
 
   let raw: string | null
   try {
-    raw = settings.provider === 'cloudflare'
-      ? await askWorkersAi(getWorkersAi(c.env), settings.cfModel, prompt, temperature)
-      : await askApiModel(
-          (c.env.AI_BASE_URL ?? '').trim(),
-          (c.env.AI_API_KEY ?? '').trim(),
-          settings.apiModel,
-          prompt,
-          temperature,
-          settings.reasoning,
-        )
+    if (settings.provider === 'cloudflare') {
+      raw = (await askWorkersAiWithFallback(c.env, settings.cfModel, prompt, temperature)).text
+    } else {
+      raw = await askApiModel(
+        (c.env.AI_BASE_URL ?? '').trim(),
+        (c.env.AI_API_KEY ?? '').trim(),
+        settings.apiModel,
+        prompt,
+        temperature,
+        settings.reasoning,
+      )
+    }
   } catch (err) {
     // 调用失败（含超时）：回落本地
     console.warn('ai request failed:', err)
@@ -1305,9 +1389,12 @@ app.post('/api/admin/settings/ai/test', requireAuth, requireAdmin, async (c) => 
   const start = Date.now()
   const temperature = AI_TEMPERATURE.hard
   let raw: string | null
+  let shape = ''
   try {
     if (provider === 'cloudflare') {
-      raw = await askWorkersAi(getWorkersAi(c.env), cfModel, AI_TEST_PROMPT, temperature)
+      const r = await askWorkersAiWithFallback(c.env, cfModel, AI_TEST_PROMPT, temperature)
+      raw = r.text
+      shape = r.shape + (r.error ? `，模型返回 error=${r.error.slice(0, 200)}` : '')
     } else if (provider === 'off') {
       return c.json({ ok: false, provider, model: modelId, error: '当前提供方已关闭，未发起调用' })
     } else {
@@ -1322,7 +1409,7 @@ app.post('/api/admin/settings/ai/test', requireAuth, requireAdmin, async (c) => 
       raw = await askApiModel(baseUrl, apiKey, apiModel, AI_TEST_PROMPT, temperature, reasoning)
     }
   } catch (err) {
-    // 必须把平台原话带回来：额度超限、模型已下架、账号未设支出上限，
+    // 必须把平台原话带回来：超时、额度超限、模型已下架、模型在本区不可用，
     // 现象都是「调用失败」，只有原始信息能区分
     console.warn('ai test failed:', err)
     const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
@@ -1332,9 +1419,13 @@ app.post('/api/admin/settings/ai/test', requireAuth, requireAdmin, async (c) => 
   if (raw === null) {
     return c.json({
       ok: false, provider, model: modelId,
-      error: '模型返回空正文或 HTTP 错误',
+      error: shape === 'binding-missing'
+        ? 'Workers AI 绑定不可用（env.CYM / env.AI 都没有 run）'
+        : '模型没有返回可用正文',
       hint: provider === 'cloudflare'
-        ? '若模型可用仍返回空，检查 Workers AI 是否设置了支出上限（Workers & Pages → AI → 账单）'
+        ? shape === 'binding-missing'
+          ? '确认 Workers 已添加 Workers AI 绑定，且绑定名与代码读取的一致（当前兼容 CYM / AI 两个名字）'
+          : `Workers AI 文本生成的返回值是 { response: "..." }；实际拿到 ${shape}。若仍为空，多半是这个模型在账户所在区不可用——换一个模型再试`
         : undefined,
     })
   }
