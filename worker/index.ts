@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
-import type { MiddlewareHandler } from 'hono'
+import type { Context, MiddlewareHandler } from 'hono'
 import {
   COOKIE_NAME,
   COOKIE_OPTS,
@@ -173,6 +173,14 @@ const AI_CF_MODELS: AiModelInfo[] = [
 ]
 /** 游客额度归属前缀：同一设备 ID 一天共享一个额度 */
 const AI_GUEST_PREFIX = 'guest:'
+/**
+ * 游客 users 行的邮箱域名。.invalid 是 IETF 保留的无效 TLD，不会真正送达，
+ * 同时也让「游客账号」在 users 表里可被机器识别（用于管理员列表和找回密码的过滤）。
+ */
+const AI_GUEST_EMAIL_PREFIX = 'guest'
+const AI_GUEST_EMAIL_DOMAIN = 'gamehub.invalid'
+/** users.email 上的游客邮箱特征。管理员列表、好友搜索、找回密码都按它排除游客账号 */
+const GUEST_EMAIL_LIKE = `%@${AI_GUEST_EMAIL_DOMAIN}`
 /** 设备 ID 格式：客户端 16 字节随机数转十六进制 */
 const DEVICE_ID_RE = /^[a-f0-9]{32}$/
 /** 设备 ID 上限，防超大请求体 */
@@ -323,6 +331,87 @@ const requireAdmin: MiddlewareHandler<{ Bindings: Env; Variables: Vars }> = asyn
   await next()
 }
 
+// ---------- 多人对战身份：登录账号与游客统一 ----------
+
+/** 对局参与者。id 是唯一身份键，对局里的归属判断全部拿它比对 */
+interface RoomActor {
+  /** 登录账号 = users.id；游客 = 'guest:' + deviceId */
+  id: string
+  /** 展示名：登录账号取 username，游客取自选昵称 */
+  name: string
+  isUser: boolean
+}
+
+const ROOM_NAME_MAX = 12
+const ROOM_NAME_RE = /^[\p{L}\p{N}_][\p{L}\p{N}_·\s]{0,11}$/u
+
+/** 昵称快筛：非法或留空时回落到「游客+设备号前 4 位」，保证对手看得到区分度 */
+function roomDisplayName(raw: unknown, deviceId: string): string {
+  const s = typeof raw === 'string' ? raw.trim().replace(/\s+/g, ' ').slice(0, ROOM_NAME_MAX) : ''
+  return s && ROOM_NAME_RE.test(s) ? s : '游客' + deviceId.slice(0, 4)
+}
+
+/**
+ * 有有效登录态就用账号；否则拿 deviceId 当游客。
+ * 两者在建房、加入、走子、认输上完全等价，所以对局路由不用 requireAuth。
+ * deviceId 由客户端生成、可伪造，所以它只能用于「区分两方」，不作为信任边界。
+ *
+ * 游客会在这里补一行 users 记录（必须先建，见 ensureGuestUser 的注释），
+ * 返回的 name 取库里实际的 username——昵称撞名时会带设备号后缀。
+ *
+ * deviceId/name 从 body 或 query 取：写操作用 body，GET 没有请求体只能走 query。
+ */
+async function resolveActor(
+  c: Context<{ Bindings: Env; Variables: Vars }>,
+  body: Record<string, unknown> | null,
+): Promise<RoomActor> {
+  const token = getCookie(c, COOKIE_NAME)
+  const payload = token ? await verifyToken(token, c.env.JWT_SECRET) : null
+  if (payload) {
+    const user = await loadUser(c.env.DB, payload.uid)
+    // 被吊销 / 被禁 / 账号已删时不能顶着登录态走，退回游客身份
+    if (user && !user.is_banned && !(await isTokenRevoked(c.env.DB, user.id, payload.iat))) {
+      return { id: user.id, name: user.username, isUser: true }
+    }
+  }
+  const q = c.req.query()
+  const pick = (v: unknown, fallback: string): string =>
+    typeof v === 'string' && v.length > 0 ? v : fallback
+  const deviceId = pick(body?.deviceId, pick(q.deviceId, ''))
+  if (!DEVICE_ID_RE.test(deviceId)) throw new HTTPError(400, '缺少有效的设备标识')
+  const nickname = roomDisplayName(pick(body?.name, pick(q.name, '')), deviceId)
+  const username = await ensureGuestUser(c.env.DB, deviceId, nickname)
+  return { id: AI_GUEST_PREFIX + deviceId, name: username, isUser: false }
+}
+
+/**
+ * 游客也要有一行 users 记录，否则 host_id / player_id 的 REFERENCES 会违约。
+ * 这行永远登不上：password_hash 是随机值，不存在与之匹配的密码。
+ * username 就是昵称（展示名），被别的设备占了就退化成「昵称+设备号前 4 位」。
+ * 注意 ON CONFLICT 只更新 username——绝不能碰 password_hash / salt，
+ * 否则任何访客都能把游客账号改成自己可登录的账号。
+ */
+async function ensureGuestUser(db: D1Database, deviceId: string, nickname: string): Promise<string> {
+  const id = AI_GUEST_PREFIX + deviceId
+  const email = `${AI_GUEST_EMAIL_PREFIX}-${deviceId}@${AI_GUEST_EMAIL_DOMAIN}`
+  for (const username of [nickname, nickname + deviceId.slice(0, 4)]) {
+    try {
+      await db.prepare(
+        `INSERT INTO users (id, email, username, password_hash, salt, is_admin, is_banned)
+         VALUES (?, ?, ?, ?, ?, 0, 0)
+         ON CONFLICT(id) DO UPDATE SET username = excluded.username`,
+      ).bind(id, email, username, randomSalt(), randomSalt()).run()
+      return username
+    } catch (e) {
+      // 只把「昵称被别的设备占了」当成可重试的情况；D1 的其他故障必须往上抛
+      const msg = e instanceof Error ? e.message : ''
+      if (!msg.includes('UNIQUE constraint failed')) throw e
+    }
+  }
+  // 两个候选都撞了：昵称撞名 + 设备号前 4 位也撞，32 位设备号下基本不可能
+  throw new HTTPError(400, '昵称被占用，换一个试试')
+}
+
 export const app = new Hono<{ Bindings: Env; Variables: Vars }>()
 
 // 统一错误处理（含中间件抛出的 HTTPError）
@@ -445,6 +534,9 @@ app.post('/api/auth/forgot-password', async (c) => {
   if (!body) badRequest('请求体格式错误')
   const { email, code, newPassword } = (body ?? {}) as Record<string, unknown>
   if (typeof email !== 'string' || !EMAIL_RE.test(email))
+    badRequest('邮箱格式不正确')
+  // 游客对局的空壳账号也匹配 EMAIL_RE，但它们的邮箱指向保留域，绝不能允许重置密码
+  if (email.toLowerCase().endsWith('@' + AI_GUEST_EMAIL_DOMAIN))
     badRequest('邮箱格式不正确')
   if (typeof code !== 'string' || !CODE_RE.test(code))
     badRequest('请输入 6 位数字邮箱验证码')
@@ -765,11 +857,13 @@ app.delete('/api/me/favorites/:gameId', requireAuth, async (c) => {
 
 app.get('/api/admin/stats', requireAuth, requireAdmin, async (c) => {
   const db = c.env.DB
+  // 游客对局会在 users 表建空壳账号，统计里不算它们
+  const guestWhere = `email NOT LIKE '${GUEST_EMAIL_LIKE}'`
   const [userCount, scoreCount, favCount, recentUsers] = await Promise.all([
-    db.prepare('SELECT COUNT(*) AS cnt FROM users').first<{ cnt: number }>(),
+    db.prepare(`SELECT COUNT(*) AS cnt FROM users WHERE ${guestWhere}`).first<{ cnt: number }>(),
     db.prepare('SELECT COUNT(*) AS cnt FROM scores').first<{ cnt: number }>(),
     db.prepare('SELECT COUNT(*) AS cnt FROM favorites').first<{ cnt: number }>(),
-    db.prepare('SELECT COUNT(*) AS cnt FROM users WHERE created_at >= ?')
+    db.prepare(`SELECT COUNT(*) AS cnt FROM users WHERE ${guestWhere} AND created_at >= ?`)
       .bind(Math.floor(Date.now() / 1000) - 7 * 24 * 3600)
       .first<{ cnt: number }>(),
   ])
@@ -778,7 +872,7 @@ app.get('/api/admin/stats', requireAuth, requireAdmin, async (c) => {
   ).all<{ gameId: string; cnt: number }>()
   const { results: recentReg } = await db.prepare(
     `SELECT u.username, u.email, u.created_at AS createdAt, u.is_admin AS isAdmin
-     FROM users u ORDER BY u.created_at DESC LIMIT 5`,
+     FROM users u WHERE ${guestWhere} ORDER BY u.created_at DESC LIMIT 5`,
   ).all<{ username: string; email: string; createdAt: number; isAdmin: boolean }>()
   return c.json({
     totalUsers: userCount?.cnt ?? 0,
@@ -796,10 +890,11 @@ app.get('/api/admin/users', requireAuth, requireAdmin, async (c) => {
   const limit = Math.max(1, Math.min(Number(c.req.query('limit')) || 20, 100))
   const offset = Math.max(Number(c.req.query('offset')) || 0, 0)
   const db = c.env.DB
-  let where = '1=1'
+  // 游客对局会在 users 表里建一行空壳账号（见 ensureGuestUser），管理列表不该被它们淹没
+  let where = `email NOT LIKE '${GUEST_EMAIL_LIKE}'`
   const params: unknown[] = []
   if (search) {
-    where = '(username LIKE ? OR email LIKE ?)'
+    where = `(${where}) AND (username LIKE ? OR email LIKE ?)`
     params.push(`%${search}%`, `%${search}%`)
   }
   const countRow = await db.prepare(`SELECT COUNT(*) AS cnt FROM users WHERE ${where}`)
@@ -1032,7 +1127,8 @@ app.get('/api/friends/search', requireAuth, async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT u.id, u.username, u.is_banned AS isBanned
      FROM users u
-     WHERE u.id != ? AND (u.username LIKE ? OR u.email LIKE ?)
+     WHERE u.id != ? AND u.email NOT LIKE '${GUEST_EMAIL_LIKE}'
+     AND (u.username LIKE ? OR u.email LIKE ?)
      AND u.id NOT IN (SELECT friend_id FROM friendships WHERE user_id = ?)
      ORDER BY u.username LIMIT 20`,
   ).bind(user.id, `%${q}%`, `%${q}%`, user.id).all<{ id: string; username: string; isBanned: boolean }>()
@@ -1045,6 +1141,8 @@ app.post('/api/friends/:userId', requireAuth, async (c) => {
   const user = c.get('user')
   const targetId = c.req.param('userId')
   if (targetId === user.id) badRequest('不能添加自己为好友')
+  // 游客对局的空壳账号不算可加好友的对象
+  if (targetId.startsWith(AI_GUEST_PREFIX)) badRequest('不能添加该用户为好友')
   const target = await c.env.DB.prepare('SELECT id, username FROM users WHERE id = ?').bind(targetId).first()
   if (!target) badRequest('用户不存在')
   await c.env.DB.prepare(
@@ -1069,11 +1167,11 @@ app.delete('/api/friends/:userId', requireAuth, async (c) => {
 
 const ROOM_GAME_IDS = new Set(['xiangqi', 'chess', 'gomoku', 'go'])
 
-app.post('/api/rooms', requireAuth, async (c) => {
-  const user = c.get('user')
+app.post('/api/rooms', async (c) => {
   const body = await c.req.json().catch(() => null)
   if (!body) badRequest('请求体格式错误')
-  const { gameId, preferredColor } = (body ?? {}) as Record<string, unknown>
+  const actor = await resolveActor(c, body)
+  const { gameId, preferredColor } = body as Record<string, unknown>
   if (typeof gameId !== 'string' || !ROOM_GAME_IDS.has(gameId)) badRequest('不支持的对局游戏')
   const roomId = 'rm_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
   const color = (typeof preferredColor === 'string' && (preferredColor === 'r' || preferredColor === 'b'))
@@ -1081,22 +1179,26 @@ app.post('/api/rooms', requireAuth, async (c) => {
   await c.env.DB.prepare(
     `INSERT INTO game_rooms (id, game_id, host_id, host_color, player_color, board_state, current_turn, status)
      VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting')`,
-  ).bind(roomId, gameId, user.id, color, color === 'r' ? 'b' : 'r', '[]', color).run()
+  ).bind(roomId, gameId, actor.id, color, color === 'r' ? 'b' : 'r', '[]', color).run()
   return c.json({ roomId })
 })
 
-app.get('/api/rooms', requireAuth, async (c) => {
-  const user = c.get('user')
+app.get('/api/rooms', async (c) => {
+  const actor = await resolveActor(c, null)
   const { results } = await c.env.DB.prepare(
     `SELECT r.id, r.game_id, r.host_id, r.player_id, r.host_color, r.player_color,
             r.status, r.created_at AS createdAt,
-            u.username AS hostName
-     FROM game_rooms r LEFT JOIN users u ON u.id = r.host_id
+            COALESCE(u1.username, '游客') AS hostName,
+            COALESCE(u2.username, '游客') AS playerName
+     FROM game_rooms r
+     LEFT JOIN users u1 ON u1.id = r.host_id
+     LEFT JOIN users u2 ON u2.id = r.player_id
      WHERE r.host_id = ? OR r.player_id = ?
      ORDER BY r.created_at DESC LIMIT 20`,
-  ).bind(user.id, user.id).all<{
+  ).bind(actor.id, actor.id).all<{
     id: string; game_id: string; host_id: string; player_id: string | null
-    host_color: string; player_color: string; status: string; createdAt: number; hostName: string | null
+    host_color: string; player_color: string; status: string; createdAt: number
+    hostName: string; playerName: string | null
   }>()
   const rooms = results ?? []
   const profiles = await fetchProfiles(
@@ -1112,14 +1214,15 @@ app.get('/api/rooms', requireAuth, async (c) => {
   })
 })
 
-app.get('/api/rooms/:id', requireAuth, async (c) => {
-  const user = c.get('user')
+app.get('/api/rooms/:id', async (c) => {
+  const actor = await resolveActor(c, null)
   const roomId = c.req.param('id')
   const row = await c.env.DB.prepare(
     `SELECT r.id, r.game_id, r.host_id, r.player_id, r.host_color, r.player_color,
             r.board_state, r.current_turn, r.last_move, r.status, r.moves_count,
             r.created_at AS createdAt, r.updated_at AS updatedAt,
-            u1.username AS hostName, u2.username AS playerName
+            COALESCE(u1.username, '游客') AS hostName,
+            COALESCE(u2.username, '游客') AS playerName
      FROM game_rooms r
      LEFT JOIN users u1 ON u1.id = r.host_id
      LEFT JOIN users u2 ON u2.id = r.player_id
@@ -1128,10 +1231,10 @@ app.get('/api/rooms/:id', requireAuth, async (c) => {
     id: string; game_id: string; host_id: string; player_id: string | null
     host_color: string; player_color: string; board_state: string; current_turn: string
     last_move: string | null; status: string; moves_count: number
-    createdAt: number; updatedAt: number; hostName: string | null; playerName: string | null
+    createdAt: number; updatedAt: number; hostName: string; playerName: string | null
   }>()
   if (!row) badRequest('对局不存在')
-  if (row.host_id !== user.id && row.player_id !== user.id)
+  if (row.host_id !== actor.id && row.player_id !== actor.id)
     throw new HTTPError(403, '无权查看此对局')
   const profiles = await fetchProfiles(
     c.env.DB,
@@ -1144,26 +1247,27 @@ app.get('/api/rooms/:id', requireAuth, async (c) => {
   })
 })
 
-app.post('/api/rooms/:id/join', requireAuth, async (c) => {
-  const user = c.get('user')
+app.post('/api/rooms/:id/join', async (c) => {
+  const body = await c.req.json().catch(() => null)
+  const actor = await resolveActor(c, body)
   const roomId = c.req.param('id')
   const room = await c.env.DB.prepare(
     'SELECT id, host_id, player_id, host_color, player_color, status FROM game_rooms WHERE id = ?',
   ).bind(roomId).first()
   if (!room) badRequest('对局不存在')
   if (room.status !== 'waiting') badRequest('对局已开始')
-  if (room.host_id === user.id) badRequest('你是房主，无需加入')
+  if (room.host_id === actor.id) badRequest('你是房主，无需加入')
   await c.env.DB.prepare(
     'UPDATE game_rooms SET player_id = ?, status = ?, updated_at = ? WHERE id = ?',
-  ).bind(user.id, 'playing', Math.floor(Date.now() / 1000), roomId).run()
+  ).bind(actor.id, 'playing', Math.floor(Date.now() / 1000), roomId).run()
   return c.json({ ok: true })
 })
 
-app.post('/api/rooms/:id/move', requireAuth, async (c) => {
-  const user = c.get('user')
-  const roomId = c.req.param('id')
+app.post('/api/rooms/:id/move', async (c) => {
   const body = await c.req.json().catch(() => null)
   if (!body) badRequest('请求体格式错误')
+  const actor = await resolveActor(c, body)
+  const roomId = c.req.param('id')
   const { move } = body as Record<string, unknown>
   if (typeof move !== 'object' || move === null) badRequest('无效走法')
 
@@ -1174,7 +1278,7 @@ app.post('/api/rooms/:id/move', requireAuth, async (c) => {
   if (room.status === 'finished') badRequest('对局已结束')
   if (room.status === 'waiting') badRequest('对局尚未开始，等待对手加入')
 
-  const userColor = room.host_id === user.id ? room.host_color : room.player_color
+  const userColor = room.host_id === actor.id ? room.host_color : room.player_color
   if (room.current_turn !== userColor) throw new HTTPError(400, '还没轮到你')
 
   const newMoves = (Number(room.moves_count) || 0) + 1
@@ -1188,8 +1292,9 @@ app.post('/api/rooms/:id/move', requireAuth, async (c) => {
   return c.json({ ok: true, currentTurn: nextTurn, movesCount: newMoves })
 })
 
-app.post('/api/rooms/:id/resign', requireAuth, async (c) => {
-  const user = c.get('user')
+app.post('/api/rooms/:id/resign', async (c) => {
+  const body = await c.req.json().catch(() => null)
+  const actor = await resolveActor(c, body)
   const roomId = c.req.param('id')
   // created_at 必须一起取出来，否则下面算 duration 时是 NaN
   const room = await c.env.DB.prepare(
@@ -1197,41 +1302,45 @@ app.post('/api/rooms/:id/resign', requireAuth, async (c) => {
   ).bind(roomId).first()
   if (!room) badRequest('对局不存在')
   if (room.status !== 'playing') badRequest('对局不在进行中')
-  if (room.host_id !== user.id && room.player_id !== user.id)
+  if (room.host_id !== actor.id && room.player_id !== actor.id)
     throw new HTTPError(403, '非对局参与者')
 
-  const winnerId = room.host_id === user.id ? room.player_id : room.host_id
+  const winnerId = room.host_id === actor.id ? room.player_id : room.host_id
   const now = Math.floor(Date.now() / 1000)
+  // last_move 同时当终局标记用：对手靠轮询看到 winner 才知道自己赢了，
+  // resigned 让认输方自己重进房间时仍显示「你已认输」而不是「平局」
   await c.env.DB.prepare(
-    'UPDATE game_rooms SET status = ?, updated_at = ? WHERE id = ?',
-  ).bind('finished', now, roomId).run()
+    'UPDATE game_rooms SET status = ?, last_move = ?, updated_at = ? WHERE id = ?',
+  ).bind('finished', JSON.stringify({ winner: winnerId, reason: 'resign', resigned: actor.id }), now, roomId).run()
   await c.env.DB.prepare(
     `INSERT INTO game_histories (room_id, game_id, player_id, opponent_id, winner, moves, duration)
      VALUES (?, ?, ?, ?, ?, 0, ?)`,
-  ).bind(roomId, room.game_id, user.id, winnerId!, 'resign', now - Math.floor(Number(room.created_at))).run()
+  ).bind(roomId, room.game_id, actor.id, winnerId!, 'resign', now - Math.floor(Number(room.created_at))).run()
 
   return c.json({ ok: true, winner: winnerId })
 })
 
-app.delete('/api/rooms/:id', requireAuth, async (c) => {
-  const user = c.get('user')
+app.delete('/api/rooms/:id', async (c) => {
+  const actor = await resolveActor(c, null)
   const roomId = c.req.param('id')
   const room = await c.env.DB.prepare(
     'SELECT id, host_id, player_id, status, game_id, created_at FROM game_rooms WHERE id = ?',
   ).bind(roomId).first()
   if (!room) badRequest('对局不存在')
-  if (room.host_id !== user.id && room.player_id !== user.id)
+  if (room.host_id !== actor.id && room.player_id !== actor.id)
     throw new HTTPError(403, '非对局参与者')
   if (room.status === 'waiting') {
     await c.env.DB.prepare('DELETE FROM game_rooms WHERE id = ?').bind(roomId).run()
   } else if (room.status === 'playing') {
-    const winnerId = room.host_id === user.id ? room.player_id : room.host_id
+    const winnerId = room.host_id === actor.id ? room.player_id : room.host_id
     const now = Math.floor(Date.now() / 1000)
-    await c.env.DB.prepare('UPDATE game_rooms SET status = ?, updated_at = ? WHERE id = ?').bind('finished', now, roomId).run()
+    await c.env.DB.prepare(
+      'UPDATE game_rooms SET status = ?, last_move = ?, updated_at = ? WHERE id = ?',
+    ).bind('finished', JSON.stringify({ winner: winnerId, reason: 'leave', left: actor.id }), now, roomId).run()
     await c.env.DB.prepare(
       `INSERT INTO game_histories (room_id, game_id, player_id, opponent_id, winner, moves, duration)
        VALUES (?, ?, ?, ?, ?, 0, ?)`,
-    ).bind(roomId, room.game_id, user.id, winnerId!, 'leave', now - Math.floor(Number(room.created_at))).run()
+    ).bind(roomId, room.game_id, actor.id, winnerId!, 'leave', now - Math.floor(Number(room.created_at))).run()
   }
   return c.json({ ok: true })
 })
@@ -1240,12 +1349,13 @@ app.get('/api/friends/match-history', requireAuth, async (c) => {
   const user = c.get('user')
   const { results } = await c.env.DB.prepare(
     `SELECT game_id, opponent_id, winner, moves, duration, created_at AS createdAt,
-            u.username AS opponentName
-     FROM game_histories gh JOIN users u ON u.id = gh.opponent_id
-     WHERE gh.player_id = ? ORDER BY created_at DESC LIMIT 50`,
+            COALESCE(u.username, '游客') AS opponentName
+     FROM game_histories gh
+     LEFT JOIN users u ON u.id = gh.opponent_id
+     WHERE gh.player_id = ? ORDER BY gh.created_at DESC LIMIT 50`,
   ).bind(user.id).all<{
     game_id: string; opponent_id: string; winner: string | null; moves: number
-    duration: number; createdAt: number; opponentName: string | null
+    duration: number; createdAt: number; opponentName: string
   }>()
   const history = results ?? []
   const profiles = await fetchProfiles(c.env.DB, history.map((h) => h.opponent_id))

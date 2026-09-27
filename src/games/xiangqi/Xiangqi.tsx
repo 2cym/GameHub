@@ -253,6 +253,9 @@ export default function Xiangqi({ onGameOver }: GameProps) {
       <div className={styles.sideRow}>
         <div className={`${shared.stage} ${styles.stagePad}`}>
           <div className={styles.board}>
+            {/* 楚河汉界：绝对定位在棋盘正中（第 4、5 行格线之间），
+                cell 的 z-index:1 在上方，所以不会挡点击 */}
+            <div className={styles.river}>楚 河 　 漢 界</div>
             {board.map((p, i) => {
               const x = i % COLS
               const y = Math.floor(i / COLS)

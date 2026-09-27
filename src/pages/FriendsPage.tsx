@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Avatar } from '../components/Avatar'
 import { friendApi, roomApi, type FriendUser, type MatchHistory, type RoomSummary, type SearchResult } from '../lib/api'
+import { getGuestName, guestActorId, setGuestName } from '../lib/deviceId'
 import { useAuth } from '../stores/auth'
 import { toast } from '../stores/toast'
 import styles from './Friends.module.css'
@@ -42,9 +43,22 @@ export function FriendsPage() {
   const [selectedGame, setSelectedGame] = useState('xiangqi')
   const [selectedColor, setSelectedColor] = useState('r')
   const [showCreate, setShowCreate] = useState(false)
+  // 游客昵称：对局里对手的展示名。只在下次建房/加入时生效，已存在的房间保留旧名
+  const [nick, setNick] = useState(() => getGuestName())
+  // 房间归属判断用：登录账号是 users.id，游客是 'guest:<deviceId>'
+  const myId = user?.id ?? guestActorId()
 
   useEffect(() => {
-    if (status !== 'authed') return
+    if (status === 'loading') return
+    // 游客只有房间可用；好友、对战记录都需要账号
+    if (status !== 'authed') {
+      setLoading(true)
+      roomApi.list()
+        .then(({ rooms }) => setRooms(rooms))
+        .catch(() => toast('加载失败', 'error'))
+        .finally(() => setLoading(false))
+      return
+    }
     setLoading(true)
     Promise.all([friendApi.list(), friendApi.matchHistory(), roomApi.list()])
       .then(([{ friends }, { history }, { rooms }]) => {
@@ -57,6 +71,10 @@ export function FriendsPage() {
   }, [status])
 
   useEffect(() => {
+    if (status !== 'authed') {
+      setResults([])
+      return
+    }
     if (search.trim().length < 1) {
       setResults([])
       return
@@ -67,7 +85,7 @@ export function FriendsPage() {
         .catch(() => {})
     }, 300)
     return () => clearTimeout(t)
-  }, [search])
+  }, [search, status])
 
   const handleAddFriend = async (id: string) => {
     setBusy(true)
@@ -98,7 +116,13 @@ export function FriendsPage() {
     }
   }
 
+  const saveNick = () => {
+    const saved = setGuestName(nick)
+    if (saved !== nick) setNick(saved)
+  }
+
   const handleCreateRoom = async () => {
+    saveNick()
     setBusy(true)
     try {
       const { roomId } = await roomApi.create(selectedGame, selectedColor)
@@ -113,6 +137,7 @@ export function FriendsPage() {
   }
 
   const handleJoinRoom = async (id: string) => {
+    saveNick()
     setBusy(true)
     try {
       await roomApi.join(id)
@@ -142,21 +167,6 @@ export function FriendsPage() {
     return <div className={`container ${styles.page}`}><div className={styles.loading}><span className={styles.spinner} /> 加载中…</div></div>
   }
 
-  if (!user) {
-    return (
-      <div className={`container ${styles.page}`}>
-        <div className={styles.guestPrompt}>
-          <div className={styles.guestIcon}>🤝</div>
-          <h1>好友与对战</h1>
-          <p className={styles.emptyText}>登录后可以添加好友、发起棋类单挑</p>
-          <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => openAuth('login')}>
-            登录 / 注册
-          </button>
-        </div>
-      </div>
-    )
-  }
-
   const statusMap: Record<string, string> = {
     waiting: styles.statusWaiting,
     playing: styles.statusPlaying,
@@ -176,6 +186,32 @@ export function FriendsPage() {
           {showCreate ? '取消' : '➕ 发起对局'}
         </button>
       </div>
+
+      {!user && (
+        <div className={styles.section}>
+          <h2 className={styles.sectionTitle}>👤 游客对局</h2>
+          <p className={styles.emptyText} style={{ margin: '0 0 12px' }}>
+            不用登录就能建房和加入，把房间号发给对手即可。加好友和看对战记录需要账号。
+          </p>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <input
+              className={styles.searchInput}
+              type="text"
+              placeholder="对战昵称（1-12 位）"
+              maxLength={12}
+              value={nick}
+              style={{ maxWidth: 260 }}
+              onChange={(e) => setNick(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && saveNick()}
+            />
+            <button className="btn btn-ghost" onClick={saveNick}>保存昵称</button>
+            <button className="btn btn-ghost" onClick={() => openAuth('login')}>登录 / 注册</button>
+          </div>
+          <p className={styles.emptyText} style={{ margin: '10px 0 0' }}>
+            昵称在下次创建或加入房间时生效，对手会看到这个名字。
+          </p>
+        </div>
+      )}
 
       {showCreate && (
         <div className={styles.section}>
@@ -214,6 +250,7 @@ export function FriendsPage() {
         </div>
       )}
 
+      {user && (<>
       <div className={styles.section}>
         <h2 className={styles.sectionTitle}>🔍 搜索用户</h2>
         <div className={styles.searchRow}>
@@ -293,6 +330,7 @@ export function FriendsPage() {
           </div>
         )}
       </div>
+      </>)}
 
       {rooms.length > 0 && (
         <div className={styles.section}>
@@ -309,10 +347,10 @@ export function FriendsPage() {
                     </span>
                   </div>
                   <div className={styles.roomMeta}>
-                    {r.hostName ?? '未知'} vs {r.player_id ? '已加入' : '等待对手'} · {fmtTime(r.createdAt)}
+                    {r.hostName ?? '未知'} vs {r.player_id ? (r.playerName ?? '已加入') : '等待对手'} · {fmtTime(r.createdAt)}
                   </div>
                   <div className={styles.roomActions}>
-                    {r.status === 'waiting' && r.host_id !== user.id ? (
+                    {r.status === 'waiting' && r.host_id !== myId ? (
                       <button className={`${styles.actionBtn} ${styles.actionBtnPrimary}`} disabled={busy} onClick={() => handleJoinRoom(r.id)}>
                         加入
                       </button>
@@ -339,7 +377,7 @@ export function FriendsPage() {
         </div>
       )}
 
-      <div className={styles.section}>
+      {user && <div className={styles.section}>
         <h2 className={styles.sectionTitle}>📊 对战记录</h2>
         {loading && !history.length ? (
           <div className={styles.loading}><span className={styles.spinner} /> 加载中…</div>
@@ -366,7 +404,7 @@ export function FriendsPage() {
                 let result = '平局'
                 let cls = styles.resultDraw
                 if (h.winner) {
-                  if (h.winner === user.id) { result = '胜利'; cls = styles.resultWin }
+                  if (h.winner === myId) { result = '胜利'; cls = styles.resultWin }
                   else if (h.winner === h.opponent_id) { result = '失败'; cls = styles.resultLose }
                   else { result = h.winner === 'resign' ? '对方认输' : '对方退出'; cls = styles.resultWin }
                 }
@@ -384,7 +422,7 @@ export function FriendsPage() {
             </tbody>
           </table>
         )}
-      </div>
+      </div>}
     </div>
   )
 }

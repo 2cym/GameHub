@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { roomApi, type GameRoom } from '../lib/api'
+import { guestActorId } from '../lib/deviceId'
 import { useAuth } from '../stores/auth'
 import { toast } from '../stores/toast'
 import {
@@ -39,6 +40,8 @@ function isRed(p: string | null) {
 export function MatchPage() {
   const { roomId } = useParams<{ roomId: string }>()
   const { user, status } = useAuth()
+  // 登录账号用 users.id；游客用 'guest:<deviceId>'，与后端存进 host_id/player_id 的值一致
+  const myId = user?.id ?? guestActorId()
   const navigate = useNavigate()
   const [room, setRoom] = useState<GameRoom | null>(null)
   const [loading, setLoading] = useState(true)
@@ -76,7 +79,7 @@ export function MatchPage() {
       .then((r) => {
         setRoom(r)
         // Determine my color
-        const color = r.host_id === user?.id ? r.host_color : r.player_color
+        const color = r.host_id === myId ? r.host_color : r.player_color
         setMyColor(color as Side)
         setIsMyTurn(r.current_turn === color)
         // Parse board state if exists
@@ -102,7 +105,7 @@ export function MatchPage() {
       })
       .catch((e) => setError(e instanceof Error ? e.message : '加载失败'))
       .finally(() => setLoading(false))
-  }, [roomId, user?.id])
+  }, [roomId, myId])
 
   // Poll for updates
   const pollRoom = useCallback(async () => {
@@ -136,13 +139,12 @@ export function MatchPage() {
       }
 
       // Check if it's my turn
-      const myC = r.host_id === user?.id ? r.host_color : r.player_color
+      const myC = r.host_id === myId ? r.host_color : r.player_color
       setIsMyTurn(r.current_turn === myC)
 
       // Check if game is finished
       if (r.status === 'finished') {
         // Determine result
-        const myId = user?.id
         let lastMoveData: { resigned?: string; left?: string; winner?: string } | null = null
         if (r.last_move) {
           // 一行的脏数据不该让整个轮询静默中断
@@ -292,19 +294,6 @@ export function MatchPage() {
     return <div className={`container ${styles.page}`}><div className={styles.loading}><span className={styles.spinner} /> 加载中…</div></div>
   }
 
-  if (status !== 'authed') {
-    return (
-      <div className={`container ${styles.page}`}>
-        <div className={styles.waitingState}>
-          <div className={styles.waitingIcon}>🔒</div>
-          <h1 className={styles.waitingTitle}>需要登录</h1>
-          <p className={styles.waitingText}>请先登录后再参与好友对战</p>
-          <Link to="/" className="btn btn-primary">返回首页</Link>
-        </div>
-      </div>
-    )
-  }
-
   if (loading) {
     return <div className={`container ${styles.page}`}><div className={styles.loading}><span className={styles.spinner} /> 加载房间…</div></div>
   }
@@ -386,7 +375,7 @@ export function MatchPage() {
   // Playing state - Xiangqi board
   const hostName = room.hostName ?? '房主'
   const playerName = room.playerName ?? '对手'
-  const iAmHost = room.host_id === user?.id
+  const iAmHost = room.host_id === myId
   const myName = iAmHost ? hostName : playerName
   const oppName = iAmHost ? playerName : hostName
   // 头像圈的颜色表示红/黑方，所以只替换里面的内容，不套用调色板渐变

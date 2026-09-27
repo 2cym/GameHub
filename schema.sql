@@ -76,6 +76,10 @@ CREATE INDEX IF NOT EXISTS idx_friends_user ON friendships(user_id);
 CREATE INDEX IF NOT EXISTS idx_friends_friend ON friendships(friend_id);
 
 -- 好友对局房间
+-- host_id / player_id 必须是 users.id（D1 会强制 foreign_keys，已用回滚失败的插入验证过）。
+-- 游客因此也需要一行 users 记录：id = 'guest:<deviceId>'，email 用 @gamehub.invalid
+-- 域名，password_hash 是随机值所以永远登不上。这样 REFERENCES 成立，昵称直接落在
+-- users.username，显示名不需要额外的映射表。
 CREATE TABLE IF NOT EXISTS game_rooms (
   id            TEXT PRIMARY KEY,
   game_id       TEXT NOT NULL,

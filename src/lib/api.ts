@@ -1,4 +1,5 @@
 import type { AvatarInfo, LeaderEntry, PersonalBest, ScoreRecord, User } from './types'
+import { getDeviceId, guestDisplayName } from './deviceId'
 
 export class ApiError extends Error {
   status: number
@@ -182,6 +183,7 @@ export interface RoomSummary extends AvatarInfo {
   status: string
   createdAt: number
   hostName: string | null
+  playerName: string | null
   hostAvatar: AvatarInfo
   playerAvatar?: AvatarInfo
 }
@@ -423,26 +425,47 @@ export const friendApi = {
 
 // ---------- 对局 API ----------
 
+/**
+ * 对局接口的身份参数。登录用户带 cookie 走 JWT；游客靠 deviceId + name，
+ * 后端把 'guest:<deviceId>' 存进 game_rooms.host_id / player_id
+ * （D1 未启用 foreign_keys，REFERENCES 只是文档）。
+ * 写接口放 body，读接口放 query（GET/DELETE 没有 body）。
+ */
+function guestActor(): { deviceId: string; name: string } {
+  const deviceId = getDeviceId()
+  return { deviceId, name: guestDisplayName(deviceId) }
+}
+
+function withActor(path: string): string {
+  const { deviceId, name } = guestActor()
+  const sep = path.includes('?') ? '&' : '?'
+  return `${path}${sep}deviceId=${encodeURIComponent(deviceId)}&name=${encodeURIComponent(name)}`
+}
+
 export const roomApi = {
-  create: (gameId: string, preferredColor?: string) =>
-    post<{ roomId: string }>('/api/rooms', { gameId, preferredColor }),
+  create: (gameId: string, preferredColor?: string) => {
+    const a = guestActor()
+    return post<{ roomId: string }>('/api/rooms', { gameId, preferredColor, ...a })
+  },
 
-  list: () => request<{ rooms: RoomSummary[] }>('/api/rooms'),
+  list: () => request<{ rooms: RoomSummary[] }>(withActor('/api/rooms')),
 
-  get: (id: string) => request<GameRoom>(`/api/rooms/${encodeURIComponent(id)}`),
+  get: (id: string) => request<GameRoom>(withActor(`/api/rooms/${encodeURIComponent(id)}`)),
 
-  join: (id: string) => post<{ ok: boolean }>(`/api/rooms/${encodeURIComponent(id)}/join`),
+  join: (id: string) =>
+    post<{ ok: boolean }>(`/api/rooms/${encodeURIComponent(id)}/join`, guestActor()),
 
   move: (id: string, move: unknown) =>
     post<{ ok: boolean; currentTurn: string; movesCount: number }>(
       `/api/rooms/${encodeURIComponent(id)}/move`,
-      { move },
+      { move, ...guestActor() },
     ),
 
-  resign: (id: string) => post<{ ok: boolean; winner: string }>(`/api/rooms/${encodeURIComponent(id)}/resign`),
+  resign: (id: string) =>
+    post<{ ok: boolean; winner: string }>(`/api/rooms/${encodeURIComponent(id)}/resign`, guestActor()),
 
   exit: (id: string) =>
-    request<unknown>(`/api/rooms/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    request<unknown>(withActor(`/api/rooms/${encodeURIComponent(id)}`), { method: 'DELETE' }),
 }
 
 // ---------- 网盘 API ----------
