@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GameProps, GameStatus } from '../../lib/types'
 import { GameOverlay } from '../shared/GameOverlay'
+import { canvasDpr } from '../shared/dpr'
+import { useSaveGame } from '../shared/saveGame'
 import shared from '../shared/game.module.css'
 import styles from './Tetris.module.css'
 import { useGameKeys } from '../shared/useGameKeys'
@@ -144,10 +146,53 @@ export default function Tetris({ onGameOver }: GameProps) {
     setLevel(1)
   }, [drawPieceFromBag])
 
+  // 状态分散在 5 个 ref 里，存快照时必须聚合成一个对象
+  // 命名成 clearSaveNow，避免和本组件「重置棋盘」的 reset 冲突
+  const { hasSave, resume, reset: clearSaveNow } = useSaveGame<{
+    board: number[][]
+    active: Active
+    next: Active | null
+    bag: number[]
+    dropAcc: number
+    score: number
+    lines: number
+    level: number
+  }>(
+    'tetris',
+    status,
+    () =>
+      activeRef.current
+        ? {
+            board: boardRef.current,
+            active: activeRef.current,
+            next: nextRef.current,
+            bag: bagRef.current,
+            dropAcc: dropAccRef.current,
+            score: scoreRef.current,
+            lines: linesRef.current,
+            level,
+          }
+        : null,
+    (s) => {
+      boardRef.current = s.board
+      activeRef.current = s.active
+      nextRef.current = s.next
+      bagRef.current = s.bag
+      dropAccRef.current = s.dropAcc
+      scoreRef.current = s.score
+      linesRef.current = s.lines
+      setScore(s.score)
+      setLines(s.lines)
+      setLevel(s.level)
+    },
+    () => scoreRef.current,
+  )
+
   const start = useCallback(() => {
+    clearSaveNow()
     reset()
     setStatus('running')
-  }, [reset])
+  }, [reset, clearSaveNow])
 
   const togglePause = useCallback(() => {
     if (statusRef.current === 'running') setStatus('paused')
@@ -338,7 +383,7 @@ export default function Tetris({ onGameOver }: GameProps) {
   // 主循环 + 渲染
   useEffect(() => {
     if (status !== 'running') return
-    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    const dpr = canvasDpr()
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d')
     if (!ctx) return
@@ -472,7 +517,10 @@ export default function Tetris({ onGameOver }: GameProps) {
 
       <div
         className={shared.stage}
-        style={{ maxWidth: `min(${W}px, 100%)`, aspectRatio: `${COLS} / ${ROWS}` }}
+        style={{
+          maxWidth: `min(${W}px, 100%, calc((100vh - 230px) * ${COLS / ROWS}))`,
+          aspectRatio: `${COLS} / ${ROWS}`,
+        }}
         onTouchStart={onStageTouchStart}
         onTouchMove={onStageTouchMove}
         onTouchEnd={onStageTouchEnd}
@@ -480,8 +528,8 @@ export default function Tetris({ onGameOver }: GameProps) {
       >
         <canvas
           ref={canvasRef}
-          width={W * 2}
-          height={H * 2}
+          width={W * canvasDpr()}
+          height={H * canvasDpr()}
           className={styles.canvas}
         />
         <GameOverlay
@@ -490,6 +538,10 @@ export default function Tetris({ onGameOver }: GameProps) {
           onStart={start}
           onResume={() => setStatus('running')}
           onRestart={start}
+          hasSave={hasSave}
+          onResumeSave={() => {
+            if (resume()) setStatus('running')
+          }}
           idleHint="键盘：← → 移动 · ↑ 旋转 · ↓ 软降 · 空格硬降。手机上可左右滑动、下滑硬降、点按旋转"
         />
       </div>

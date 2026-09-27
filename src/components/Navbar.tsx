@@ -1,10 +1,13 @@
 import { Link, NavLink, useNavigate } from 'react-router-dom'
+import { Avatar } from './Avatar'
+import { useTheme } from '../lib/theme'
 import { useAuth } from '../stores/auth'
 import { toast } from '../stores/toast'
 import styles from './Navbar.module.css'
 
 export function Navbar() {
   const { user, status, logout, openAuth } = useAuth()
+  const { theme, toggle } = useTheme()
   const navigate = useNavigate()
 
   const handleLogout = async () => {
@@ -39,6 +42,19 @@ export function Navbar() {
               个人中心
             </NavLink>
           )}
+          {status === 'authed' && (
+            <NavLink to="/stats" className={styles.navLink}>
+              我的数据
+            </NavLink>
+          )}
+          {status === 'authed' && (
+            <NavLink
+              to="/friends"
+              className={styles.navLink}
+            >
+              好友对战
+            </NavLink>
+          )}
           {user?.isAdmin && (
             <NavLink to="/admin" className={styles.navLink}>
               管理后台
@@ -47,12 +63,24 @@ export function Navbar() {
         </nav>
 
         <div className={styles.actions}>
+          <button
+            type="button"
+            className={styles.themeBtn}
+            onClick={toggle}
+            aria-label={theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'}
+            title={theme === 'dark' ? '切换到亮色' : '切换到暗色'}
+          >
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
           {status === 'authed' && user ? (
             <>
               <Link to="/profile" className={styles.userChip}>
-                <span className={styles.avatar}>
-                  {user.username.slice(0, 1).toUpperCase()}
-                </span>
+                <Avatar
+                  emoji={user.avatarEmoji}
+                  color={user.avatarColor}
+                  fallback={user.username}
+                  size={30}
+                />
                 <span className={styles.username}>{user.username}</span>
               </Link>
               <button

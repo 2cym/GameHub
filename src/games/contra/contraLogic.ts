@@ -461,7 +461,8 @@ export function updateBullets(state: GameState, dt: number) {
           state.cleared = true
           spawnParticles(state, state.boss.x + state.boss.w / 2, state.boss.y + state.boss.h / 2, '#ffd166', 30)
         }
-        if (b.type !== 'L') continue
+        // 激光穿透 Boss 后每帧继续扣血，60Hz 下等于 60 DPS，Boss 不到 1 秒就被打穿
+        continue
       }
     } else {
       // 敌方子弹

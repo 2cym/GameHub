@@ -7,8 +7,11 @@ import { ToastHost } from './components/ToastHost'
 import { AdminPage } from './pages/AdminPage'
 import { GamePage } from './pages/GamePage'
 import { HomePage } from './pages/Home'
+import { FriendsPage } from './pages/FriendsPage'
+import { MatchPage } from './pages/MatchPage'
 import { NotFoundPage } from './pages/NotFound'
 import { ProfilePage } from './pages/Profile'
+import { StatsPage } from './pages/StatsPage'
 import { useAuth } from './stores/auth'
 import { api } from './lib/api'
 
@@ -32,7 +35,11 @@ export default function App() {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/game/:gameId" element={<GamePage />} />
+          <Route path="/challenge/:gameId" element={<GamePage />} />
           <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/stats" element={<StatsPage />} />
+          <Route path="/friends" element={<FriendsPage />} />
+          <Route path="/match/:roomId" element={<MatchPage />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>

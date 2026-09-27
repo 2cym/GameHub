@@ -1,17 +1,22 @@
 import { useCallback, useRef, useState } from 'react'
 import type { GameProps, GameStatus } from '../../lib/types'
 import { GameOverlay } from '../shared/GameOverlay'
+import { useSaveGame } from '../shared/saveGame'
+import { aiEngineMove } from '../shared/aiEngine'
 import { toast } from '../../stores/toast'
 import shared from '../shared/game.module.css'
 import styles from './Xiangqi.module.css'
 import {
   aiMove,
   applyMove,
+  bestOf,
   initialBoard,
   isCheckmate,
   isInCheck,
   isStalemate,
+  legalMoves,
   legalTargets,
+  moveToText,
   type Board,
   type Difficulty,
   type Move,
@@ -58,6 +63,8 @@ export default function Xiangqi({ onGameOver }: GameProps) {
   const [result, setResult] = useState<'win' | 'lose' | 'draw' | null>(null)
   const [score, setScore] = useState(0)
   const [thinking, setThinking] = useState(false)
+  /** 上一手 AI 实际使用的引擎；只有真的用到 CF 才显示标记 */
+  const [aiSrc, setAiSrc] = useState<'cf' | 'local'>('local')
 
   const statusRef = useRef(status)
   statusRef.current = status
@@ -71,7 +78,8 @@ export default function Xiangqi({ onGameOver }: GameProps) {
   diffRef.current = difficulty
   const gameOverRef = useRef(onGameOver)
   gameOverRef.current = onGameOver
-  const aiTimer = useRef<number | null>(null)
+  /** AI 回合序号：每次发起 +1，旧回合的异步结果到达时直接丢弃 */
+  const aiRunId = useRef(0)
 
   const aiSide: Side = playerColor === 'r' ? 'b' : 'r'
 
@@ -114,19 +122,57 @@ export default function Xiangqi({ onGameOver }: GameProps) {
     [checkEnd],
   )
 
-  const doAIMove = useCallback(() => {
+  const doAIMove = useCallback(async () => {
+    if (statusRef.current !== 'running') return
+    const runId = ++aiRunId.current
     setThinking(true)
-    const timer = window.setTimeout(() => {
-      const mv = aiMove(boardRef.current, aiSide, diffRef.current)
-      if (mv) playMove(boardRef.current, mv, aiSide)
-      setThinking(false)
-    }, 400)
-    aiTimer.current = timer
+    const { move, engine } = await aiEngineMove<Move>({
+      game: 'xiangqi',
+      level: diffRef.current,
+      legal: legalMoves(boardRef.current, aiSide).map((m) => ({ text: moveToText(m), move: m })),
+      side: aiSide,
+      search: (pool) =>
+        bestOf(boardRef.current, aiSide, pool, diffRef.current === 'hard' ? 3 : 2),
+      local: () => aiMove(boardRef.current, aiSide, diffRef.current),
+    })
+    if (runId !== aiRunId.current || statusRef.current !== 'running') return
+    setAiSrc(engine)
+    if (move) playMove(boardRef.current, move, aiSide)
+    setThinking(false)
   }, [aiSide, playMove])
 
+  const { hasSave, resume, reset } = useSaveGame<{
+    board: Board
+    turn: Side
+    selected: number
+    lastMove: Move | null
+  }>(
+    'xiangqi',
+    status,
+    () => ({ board, turn, selected, lastMove }),
+    (s) => {
+      aiRunId.current++
+      setBoard(s.board)
+      boardRef.current = s.board
+      setTurn(s.turn)
+      turnRef.current = s.turn
+      setSelected(s.selected)
+      setTargets([])
+      setLastMove(s.lastMove)
+      setResult(null)
+      setScore(0)
+      setThinking(false)
+      setAiSrc('local')
+    },
+    () => score,
+  )
+
   const start = useCallback(() => {
-    if (aiTimer.current) window.clearTimeout(aiTimer.current)
-    setBoard(initialBoard())
+    reset()
+    aiRunId.current++
+    const b = initialBoard()
+    setBoard(b)
+    boardRef.current = b
     setTurn('r')
     turnRef.current = 'r'
     setSelected(-1)
@@ -135,17 +181,14 @@ export default function Xiangqi({ onGameOver }: GameProps) {
     setResult(null)
     setScore(0)
     setThinking(false)
+    setAiSrc('local')
     setStatus('running')
+    // setStatus 要到下一轮渲染才同步进 statusRef，而 doAIMove 读的是 ref；
+    // 不手动补一下，选「黑方」开局时 AI 那一手会被自己的守卫条件挡掉
+    statusRef.current = 'running'
     // 玩家执黑则 AI 先走（红先）
-    if (playerRef.current === 'b') {
-      aiTimer.current = window.setTimeout(() => {
-        const mv = aiMove(initialBoard(), 'r', diffRef.current)
-        if (mv) playMove(initialBoard(), mv, 'r')
-        setThinking(false)
-      }, 400)
-      setThinking(true)
-    }
-  }, [playMove])
+    if (playerRef.current === 'b') void doAIMove()
+  }, [doAIMove, reset])
 
   const onCellClick = useCallback(
     (i: number) => {
@@ -191,11 +234,18 @@ export default function Xiangqi({ onGameOver }: GameProps) {
           <span className={shared.hudLabel}>AI</span>
           <span className={shared.hudValue}>
             {DIFFS.find((d) => d.id === difficulty)?.label}
+            {difficulty !== 'easy' && aiSrc === 'cf' && (
+              <span className={shared.aiTag} title="本手由 AI 模型生成候选">
+                · AI
+              </span>
+            )}
           </span>
         </div>
         {thinking && (
           <div className={shared.hudItem}>
-            <span className={shared.hudValue}>思考中…</span>
+            <span className={`${shared.hudValue} ${shared.thinking}`}>
+              {difficulty === 'easy' ? '思考中…' : 'AI 思考中…'}
+            </span>
           </div>
         )}
       </div>
@@ -203,8 +253,6 @@ export default function Xiangqi({ onGameOver }: GameProps) {
       <div className={styles.sideRow}>
         <div className={`${shared.stage} ${styles.stagePad}`}>
           <div className={styles.board}>
-            {/* 楚河汉界 */}
-            <div className={styles.river}>楚 河 　 漢 界</div>
             {board.map((p, i) => {
               const x = i % COLS
               const y = Math.floor(i / COLS)
@@ -257,6 +305,14 @@ export default function Xiangqi({ onGameOver }: GameProps) {
             onStart={start}
             onResume={() => setStatus('running')}
             onRestart={start}
+            hasSave={hasSave}
+            onResumeSave={() => {
+              if (!resume()) return
+              setStatus('running')
+              statusRef.current = 'running'
+              // 存档时正轮到 AI，续接就要把这一手补上
+              if (turnRef.current !== playerRef.current) void doAIMove()
+            }}
             idleTitle="中国象棋"
             idleHint="完整走法，含蹩马腿/塞象眼/白脸将。选择难度与先后手"
           />
@@ -305,6 +361,7 @@ export default function Xiangqi({ onGameOver }: GameProps) {
           </div>
           <p className={styles.tip}>
             点选己方棋子，绿点为可落子位置。吃掉对方将/帅即胜。
+            中等/困难由 AI 生成候选（游客需人机验证，失败自动回落本地）。
           </p>
         </div>
       </div>

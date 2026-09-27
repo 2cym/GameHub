@@ -17,8 +17,8 @@ html {
 body {
   font-family: var(--font);
   background:
-    radial-gradient(1200px 600px at 85% -10%, rgba(124, 92, 255, 0.14), transparent 60%),
-    radial-gradient(900px 500px at -10% 30%, rgba(0, 229, 255, 0.08), transparent 55%),
+    radial-gradient(1200px 600px at 85% -10%, var(--bg-glow-1), transparent 60%),
+    radial-gradient(900px 500px at -10% 30%, var(--bg-glow-2), transparent 55%),
     var(--bg);
   color: var(--text);
   line-height: 1.6;
@@ -63,7 +63,7 @@ kbd {
 }
 
 ::selection {
-  background: rgba(124, 92, 255, 0.45);
+  background: var(--selection);
 }
 
 ::-webkit-scrollbar {
@@ -79,7 +79,7 @@ kbd {
   border: 2px solid var(--bg);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #31406e;
+  background: var(--surface-hover);
 }
 
 :focus-visible {
@@ -126,7 +126,7 @@ kbd {
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--primary), #5a3df0);
+  background: linear-gradient(135deg, var(--primary), var(--primary-strong));
   border-color: transparent;
   box-shadow: var(--glow-primary);
 }
@@ -138,7 +138,7 @@ kbd {
 
 .btn-danger {
   color: var(--danger);
-  border-color: rgba(255, 107, 107, 0.35);
+  border-color: var(--danger-border);
 }
 
 /* 悬停样式只在真正支持 hover 的设备上生效，避免触屏点按后样式「粘住」 */
@@ -150,8 +150,8 @@ kbd {
   }
 
   .btn-primary:hover {
-    background: linear-gradient(135deg, #8d70ff, #6a4cff);
-    box-shadow: 0 0 32px rgba(124, 92, 255, 0.5);
+    background: linear-gradient(135deg, var(--primary), var(--primary-strong));
+    box-shadow: var(--primary-glow-hover);
   }
 
   .btn-ghost:hover {
@@ -160,7 +160,7 @@ kbd {
   }
 
   .btn-danger:hover {
-    background: rgba(255, 107, 107, 0.12);
+    background: var(--danger-soft);
     border-color: var(--danger);
   }
 }
@@ -175,20 +175,20 @@ kbd {
   font-weight: 600;
   letter-spacing: 0.3px;
   background: var(--primary-soft);
-  color: #b9a8ff;
-  border: 1px solid rgba(124, 92, 255, 0.3);
+  color: var(--primary-tint);
+  border: 1px solid var(--primary-border);
 }
 
 .chip-cyan {
   background: var(--accent-soft);
-  color: #7ceeff;
-  border-color: rgba(0, 229, 255, 0.3);
+  color: var(--accent-tint);
+  border-color: var(--accent-border);
 }
 
 .chip-gold {
-  background: rgba(255, 209, 102, 0.12);
+  background: var(--gold-soft);
   color: var(--gold);
-  border-color: rgba(255, 209, 102, 0.35);
+  border-color: var(--gold-border);
 }
 
 .input {
@@ -208,7 +208,7 @@ kbd {
 .input:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(124, 92, 255, 0.22);
+  box-shadow: 0 0 0 3px var(--primary-ring);
 }
 
 /* ---------- 动画 ---------- */
@@ -241,10 +241,10 @@ kbd {
 @keyframes pulse-glow {
   0%,
   100% {
-    box-shadow: 0 0 18px rgba(124, 92, 255, 0.3);
+    box-shadow: 0 0 18px var(--primary-glow-1);
   }
   50% {
-    box-shadow: 0 0 34px rgba(124, 92, 255, 0.55);
+    box-shadow: 0 0 34px var(--primary-glow-2);
   }
 }
 

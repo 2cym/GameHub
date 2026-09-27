@@ -1,0 +1,225 @@
+.page {
+  padding: 34px 0 70px;
+  animation: fade-up 0.4s ease both;
+}
+
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.title {
+  font-size: 26px;
+  margin: 0;
+}
+
+.subtitle {
+  margin: 6px 0 0;
+  font-size: 13.5px;
+  color: var(--text-dim);
+}
+
+.emptyCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding-top: 110px;
+  text-align: center;
+}
+
+.emptyCard p {
+  color: var(--text-dim);
+  max-width: 420px;
+}
+
+.statRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 14px;
+  margin-bottom: 28px;
+}
+
+.statCard {
+  padding: 20px 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(240px 90px at 0% -40%, var(--primary-glow-1), transparent 70%),
+    var(--surface);
+}
+
+.statValue {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1.1;
+  margin-bottom: 6px;
+  color: var(--accent-tint);
+}
+
+.statLabel {
+  font-size: 13.5px;
+  color: var(--text-dim);
+}
+
+.card {
+  margin-bottom: 22px;
+  padding: 22px 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.cardTitle {
+  font-size: 16px;
+  margin: 0 0 16px;
+}
+
+.muted {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.muted a {
+  color: var(--primary-tint);
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.tab {
+  padding: 7px 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 13.5px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  touch-action: manipulation;
+}
+
+.tab:hover {
+  color: var(--text);
+  border-color: var(--primary-border);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.tabOn {
+  background: var(--primary-soft);
+  border-color: var(--primary-border);
+  color: var(--primary-tint);
+}
+
+.chartBox {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chartBox svg {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.trendAxisText,
+.chartAxisText {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  fill: var(--text-faint);
+}
+
+.chartNote {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-faint);
+  line-height: 1.6;
+}
+
+.breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.breakdownRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.breakdownName {
+  flex-shrink: 0;
+  width: 128px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.breakdownName:hover {
+  color: var(--primary-tint);
+}
+
+.breakdownBarWrap {
+  flex: 1;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.breakdownBar {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--primary));
+  transition: width 0.4s ease;
+}
+
+.breakdownValue {
+  flex-shrink: 0;
+  width: 92px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--gold);
+}
+
+@media (max-width: 560px) {
+  .breakdownRow {
+    flex-wrap: wrap;
+  }
+
+  .breakdownName {
+    width: auto;
+    flex: 1;
+  }
+
+  .breakdownValue {
+    width: auto;
+    flex: 1;
+    text-align: right;
+  }
+}

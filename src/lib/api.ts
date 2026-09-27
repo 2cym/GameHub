@@ -1,4 +1,4 @@
-import type { LeaderEntry, PersonalBest, ScoreRecord, User } from './types'
+import type { AvatarInfo, LeaderEntry, PersonalBest, ScoreRecord, User } from './types'
 
 export class ApiError extends Error {
   status: number
@@ -35,9 +35,48 @@ const post = <T,>(path: string, body?: unknown) =>
 
 export type EmailCodePurpose = 'register' | 'reset'
 
+/** 收藏分类，与 worker 端的 FAV_CATEGORIES 白名单一一对应。
+ *  新增分类要同时改两边，否则后端会 400。 */
+export const FAVORITE_CATEGORIES = ['常玩', '挑战', '休闲'] as const
+export type FavoriteCategory = (typeof FAVORITE_CATEGORIES)[number]
+
+export interface FavoriteEntry {
+  gameId: string
+  category: FavoriteCategory
+}
+
+/** 成绩进步曲线的一个点。scores 表只在破纪录时写入，所以序列严格递增 */
+export interface ScoreProgressPoint {
+  /** 服务端 unix 秒（scores.created_at） */
+  t: number
+  score: number
+}
+
+/** 某一天的时长汇总，byGame 用于做按游戏的堆叠柱 */
+export interface DailyPlayTime {
+  date: string
+  total: number
+  byGame: Record<string, number>
+}
+
+export interface MeStats {
+  progress: { gameId: string; points: ScoreProgressPoint[] }[]
+  dailySeconds: DailyPlayTime[]
+  totalSeconds: number
+  playDays: number
+  /** 有时长记录的游戏数 */
+  totalGames: number
+  /** 有成绩记录或时长记录的游戏数 */
+  playedGames: number
+  /** 时长统计窗口起点（含），YYYY-MM-DD */
+  windowStart: string
+  /** 服务端认为的今天，YYYY-MM-DD */
+  today: string
+}
+
 // ---------- 管理员类型 ----------
 
-export interface AdminUserRow {
+export interface AdminUserRow extends AvatarInfo {
   id: string
   email: string
   username: string
@@ -69,6 +108,14 @@ export interface AdminDebug {
   adminEmail: string
   mailFrom: string
   workerVersion: string
+  /** OpenAI 兼容接口的凭据（AI_BASE_URL / AI_API_KEY）是否齐备 */
+  aiProvider: string
+  /** 后台选择的提供方：api / cloudflare / off */
+  aiProviderSetting: AiProvider
+  aiModel: string
+  aiReasoning: 'on' | 'off'
+  aiWorkersAiAvailable: boolean
+  turnstile: string
 }
 
 export interface AdminAnalytics {
@@ -77,6 +124,95 @@ export interface AdminAnalytics {
   viewsWeek: number
   pathDistribution: { path: string; cnt: number }[]
   hourlyTraffic: { hour: string; cnt: number }[]
+}
+
+// ---------- 留言板类型 ----------
+
+export interface MessageRow {
+  id: number
+  username: string
+  content: string
+  createdAt: number
+}
+
+// ---------- 好友类型 ----------
+
+export interface FriendUser extends AvatarInfo {
+  id: string
+  username: string
+  email: string
+  isAdmin: boolean
+  isBanned: boolean
+}
+
+export interface SearchResult extends AvatarInfo {
+  id: string
+  username: string
+  isBanned: boolean
+}
+
+// ---------- 对局类型 ----------
+
+export interface GameRoom {
+  id: string
+  game_id: string
+  host_id: string
+  player_id: string | null
+  host_color: string
+  player_color: string
+  board_state: string
+  current_turn: string
+  last_move: string | null
+  status: 'waiting' | 'playing' | 'finished'
+  moves_count: number
+  createdAt: number
+  updatedAt: number
+  hostName: string | null
+  playerName: string | null
+  hostAvatar: AvatarInfo
+  playerAvatar?: AvatarInfo
+}
+
+export interface RoomSummary extends AvatarInfo {
+  id: string
+  game_id: string
+  host_id: string
+  player_id: string | null
+  host_color: string
+  player_color: string
+  status: string
+  createdAt: number
+  hostName: string | null
+  hostAvatar: AvatarInfo
+  playerAvatar?: AvatarInfo
+}
+
+export interface MatchHistory extends AvatarInfo {
+  game_id: string
+  opponent_id: string
+  winner: string | null
+  moves: number
+  duration: number
+  createdAt: number
+  opponentName: string | null
+  opponentAvatar: AvatarInfo
+}
+
+// ---------- 网盘类型 ----------
+
+export interface FileRow {
+  id: number
+  filename: string
+  contentType: string
+  size: number
+  totalChunks: number
+  createdAt: number
+}
+
+export interface StorageInfo {
+  used: number
+  limit: number
+  percent: number
 }
 
 // ---------- 用户 API ----------
@@ -107,6 +243,15 @@ export const api = {
 
   me: () => request<{ user: User | null }>('/api/auth/me'),
 
+  myProfile: () => request<AvatarInfo>('/api/me/profile'),
+
+  updateProfile: (patch: { avatarEmoji?: string; avatarColor?: number }) =>
+    request<{ ok: boolean; avatarEmoji: string; avatarColor: string }>(`/api/me/profile`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }),
+
   leaderboard: (gameId: string) =>
     request<{ entries: LeaderEntry[] }>(
       `/api/leaderboard/${encodeURIComponent(gameId)}`,
@@ -119,9 +264,29 @@ export const api = {
 
   myRecent: () => request<{ records: ScoreRecord[] }>('/api/me/scores/recent'),
 
-  myFavorites: () => request<{ gameIds: string[] }>('/api/me/favorites'),
+  reportPlayTime: (gameId: string, seconds: number) =>
+    post<{ ok: boolean; date: string }>('/api/playtime', { gameId, seconds }),
 
-  addFavorite: (gameId: string) => post<{ ok: boolean }>('/api/me/favorites', { gameId }),
+  myStats: () => request<MeStats>('/api/me/stats'),
+
+  myFavorites: () =>
+    request<{ entries: FavoriteEntry[]; gameIds: string[] }>('/api/me/favorites'),
+
+  addFavorite: (gameId: string, category: FavoriteCategory = '常玩') =>
+    post<{ ok: boolean; gameId: string; category: FavoriteCategory }>(
+      '/api/me/favorites',
+      { gameId, category },
+    ),
+
+  setFavoriteCategory: (gameId: string, category: FavoriteCategory) =>
+    request<{ ok: boolean; gameId: string; category: FavoriteCategory }>(
+      `/api/me/favorites/${encodeURIComponent(gameId)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category }),
+      },
+    ),
 
   removeFavorite: (gameId: string) =>
     request<unknown>(`/api/me/favorites/${encodeURIComponent(gameId)}`, {
@@ -129,6 +294,9 @@ export const api = {
     }),
 
   trackView: (path: string) => post<{ ok: boolean }>('/api/analytics/view', { path }),
+
+  publicMessages: (limit = 20) =>
+    request<{ messages: MessageRow[] }>(`/api/messages/public?limit=${limit}`),
 }
 
 // ---------- 管理员 API ----------
@@ -156,4 +324,206 @@ export const adminApi = {
   debug: () => request<AdminDebug>('/api/admin/debug'),
 
   analytics: () => request<AdminAnalytics>('/api/admin/analytics'),
+}
+
+// ---------- 管理后台 AI 设置 ----------
+
+export type AiProvider = 'api' | 'cloudflare' | 'off'
+
+export interface AiModelOption {
+  id: string
+  label: string
+  desc: string
+  /** 该模型强制的 temperature；仅部分模型声明 */
+  temp?: number
+}
+
+export interface AiSettings {
+  provider: AiProvider
+  apiModel: string
+  cfModel: string
+  reasoning: boolean
+}
+
+export interface AiCapabilities {
+  api: { configured: boolean; baseUrl: string }
+  cloudflare: { available: boolean }
+}
+
+export interface AiSettingsResponse {
+  settings: AiSettings
+  apiModels: AiModelOption[]
+  cfModels: AiModelOption[]
+  capabilities: AiCapabilities
+}
+
+export interface AiSettingsPatch {
+  provider?: AiProvider
+  apiModel?: string
+  cfModel?: string
+  reasoning?: boolean
+}
+
+export interface AiTestResult {
+  ok: boolean
+  provider: AiProvider
+  model: string
+  reasoning?: boolean
+  ms?: number
+  parsed?: string[]
+  raw?: string
+  error?: string
+  hint?: string
+}
+
+export const aiSettingsApi = {
+  get: () => request<AiSettingsResponse>('/api/admin/settings/ai'),
+
+  save: (patch: AiSettingsPatch) =>
+    request<{ settings: AiSettings; capabilities: AiCapabilities }>('/api/admin/settings/ai', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }),
+
+  test: (patch?: AiSettingsPatch) =>
+    post<AiTestResult>('/api/admin/settings/ai/test', patch ?? {}),
+}
+
+// ---------- 留言板 API ----------
+
+export const messageApi = {
+  create: (username: string, content: string) =>
+    post<{ ok: boolean }>('/api/messages', { username, content }),
+
+  list: (limit = 50, offset = 0) =>
+    request<{ messages: MessageRow[]; total: number }>(
+      `/api/messages?limit=${limit}&offset=${offset}`,
+    ),
+
+  delete: (id: number) =>
+    request<unknown>(`/api/messages/${id}`, { method: 'DELETE' }),
+}
+
+// ---------- 好友 API ----------
+
+export const friendApi = {
+  list: () => request<{ friends: FriendUser[] }>('/api/friends'),
+
+  search: (q: string) =>
+    request<{ users: SearchResult[] }>(`/api/friends/search?q=${encodeURIComponent(q)}`),
+
+  add: (userId: string) => post<{ ok: boolean }>(`/api/friends/${encodeURIComponent(userId)}`),
+
+  remove: (userId: string) =>
+    request<unknown>(`/api/friends/${encodeURIComponent(userId)}`, { method: 'DELETE' }),
+
+  matchHistory: () => request<{ history: MatchHistory[] }>('/api/friends/match-history'),
+}
+
+// ---------- 对局 API ----------
+
+export const roomApi = {
+  create: (gameId: string, preferredColor?: string) =>
+    post<{ roomId: string }>('/api/rooms', { gameId, preferredColor }),
+
+  list: () => request<{ rooms: RoomSummary[] }>('/api/rooms'),
+
+  get: (id: string) => request<GameRoom>(`/api/rooms/${encodeURIComponent(id)}`),
+
+  join: (id: string) => post<{ ok: boolean }>(`/api/rooms/${encodeURIComponent(id)}/join`),
+
+  move: (id: string, move: unknown) =>
+    post<{ ok: boolean; currentTurn: string; movesCount: number }>(
+      `/api/rooms/${encodeURIComponent(id)}/move`,
+      { move },
+    ),
+
+  resign: (id: string) => post<{ ok: boolean; winner: string }>(`/api/rooms/${encodeURIComponent(id)}/resign`),
+
+  exit: (id: string) =>
+    request<unknown>(`/api/rooms/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+}
+
+// ---------- 网盘 API ----------
+
+export const fileApi = {
+  list: () => request<{ files: FileRow[] }>('/api/admin/files'),
+
+  storage: () => request<StorageInfo>('/api/admin/files/storage'),
+
+  upload: (filename: string, base64: string, contentType: string) =>
+    post<{ ok: boolean; fileId: number }>('/api/admin/files', { filename, data: base64, contentType }),
+
+  download: async (id: number) => {
+    const res = await fetch(`/api/admin/files/${id}`, { credentials: 'same-origin' })
+    if (!res.ok) throw new ApiError('下载失败', res.status)
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = res.headers.get('Content-Disposition')?.match(/filename="(.+?)"/)?.[1]?.replace(/%20/g, ' ') ?? `file_${id}`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  },
+
+  remove: (id: number) =>
+    request<unknown>(`/api/admin/files/${id}`, { method: 'DELETE' }),
+}
+
+// ---------- 棋类 AI API ----------
+
+/** 支持外部 AI 服务的棋种 */
+export type AiGame = 'chess' | 'gomoku' | 'go' | 'xiangqi'
+export type AiLevel = 'medium' | 'hard'
+
+/** 本次 AI 请求按谁放行 */
+export type AiIdentity = 'user' | 'guest' | 'none'
+
+export interface AiMoveResponse {
+  ok: boolean
+  /** cf = AI 服务给出了合法候选；local = 已回落本地 AI */
+  engine: 'cf' | 'local'
+  /** 模型返回的候选走法文本（已通过服务端合法性过滤，按优劣排序） */
+  candidates: string[]
+  model: string
+  /** 本次按谁放行：账号 / 游客设备 / 身份无法识别 */
+  identity: AiIdentity
+}
+
+/**
+ * 请求 AI 候选走法。
+ * legalMoves 由客户端用本地规则算好后传入，服务端只负责喂给模型并过滤非法输出。
+ * 登录账号凭 Cookie 放行；游客凭 deviceId + Turnstile token 放行，无步数上限。
+ */
+export const aiApi = {
+  move: (
+    game: AiGame,
+    level: AiLevel,
+    legalMoves: string[],
+    side: string,
+    deviceId: string,
+    turnstileToken?: string,
+  ) =>
+    post<AiMoveResponse>('/api/ai/move', {
+      game,
+      level,
+      legalMoves,
+      side,
+      deviceId,
+      turnstileToken,
+    }),
+}
+
+// ---------- 站点公开配置 ----------
+
+/** 由服务端下发；turnstileSiteKey 为空表示站点未启用人机验证 */
+export interface PublicConfig {
+  turnstileSiteKey: string | null
+}
+
+export const configApi = {
+  get: () => request<PublicConfig>('/api/config'),
 }

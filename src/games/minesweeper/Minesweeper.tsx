@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GameProps, GameStatus } from '../../lib/types'
 import { GameOverlay } from '../shared/GameOverlay'
 import shared from '../shared/game.module.css'
+import { useSaveGame } from '../shared/saveGame'
 import styles from './Minesweeper.module.css'
 
 const SIZE = 9
@@ -120,7 +121,24 @@ export default function Minesweeper({ onGameOver }: GameProps) {
     return () => window.clearInterval(id)
   }, [timerOn, status])
 
+  const { hasSave, resume, reset } = useSaveGame(
+    'minesweeper',
+    status,
+    () => ({ cells, flags, elapsed, timerOn, flagMode }),
+    (s) => {
+      setCells(s.cells)
+      setFlags(s.flags)
+      setElapsed(s.elapsed)
+      setTimerOn(s.timerOn)
+      setFlagMode(s.flagMode)
+      setFinalScore(null)
+      elapsedRef.current = s.elapsed
+    },
+    () => finalScore ?? 0,
+  )
+
   const start = useCallback(() => {
+    reset()
     setCells(blankBoard())
     setFlags(0)
     setElapsed(0)
@@ -128,7 +146,7 @@ export default function Minesweeper({ onGameOver }: GameProps) {
     setFinalScore(null)
     elapsedRef.current = 0
     setStatus('running')
-  }, [])
+  }, [reset])
 
   const finish = useCallback((won: boolean, board: Cell[]) => {
     if (won) {
@@ -282,6 +300,10 @@ export default function Minesweeper({ onGameOver }: GameProps) {
           onStart={start}
           onResume={() => setStatus('running')}
           onRestart={start}
+          hasSave={hasSave}
+          onResumeSave={() => {
+            if (resume()) setStatus('running')
+          }}
           idleHint="点格子挖开，长按或切到「插旗」模式标记地雷。首次点击必定安全！"
         />
       </div>

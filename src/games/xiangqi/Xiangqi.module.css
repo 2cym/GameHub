@@ -17,16 +17,14 @@
     420px,
     calc(100vw - 2 * var(--container-pad) - 2 * var(--game-pad-x) - 24px)
   );
-  --cw: calc(var(--w) / 9);
-  --ch: calc(var(--cw) * 10 / 9 / 10);
   display: grid;
-  grid-template-columns: repeat(9, var(--cw));
-  grid-template-rows: repeat(10, var(--ch));
-  width: max-content;
-  max-width: 100%;
+  grid-template-columns: repeat(9, 1fr);
+  grid-template-rows: repeat(10, 1fr);
+  width: 100%;
+  max-width: var(--w);
   aspect-ratio: 9 / 10;
   margin: 0 auto;
-  padding: calc(var(--cw) * 0.3);
+  padding: 10px;
   background: linear-gradient(145deg, #f0d090, #d8a858);
   border: 2px solid #8a6030;
   border-radius: 6px;
@@ -39,8 +37,9 @@
   position: absolute;
   left: 0;
   right: 0;
-  top: calc(var(--cw) * 0.3 + var(--ch) * 4.5);
-  height: var(--ch);
+  top: 50%;
+  transform: translateY(-50%);
+  height: 9%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -127,7 +126,7 @@
   border-radius: 50%;
   font-family: 'STKaiti', 'KaiTi', '楷体', serif;
   font-weight: 700;
-  font-size: clamp(14px, calc(var(--cw) * 0.5), 24px);
+  font-size: clamp(14px, 4.2vw, 22px);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4), inset 0 0 0 1.5px currentColor;
   user-select: none;
   -webkit-user-select: none;
@@ -207,6 +206,13 @@
   .controls {
     max-width: 220px;
     padding-top: 4px;
+  }
+}
+
+/* 平板横屏：棋盘是 9:10 的比例，宽度按可用高度的 0.9 折算 */
+@media (min-width: 900px) and (orientation: landscape) {
+  .board {
+    --w: min(600px, calc((100vh - 230px) * 0.9));
   }
 }
 

@@ -145,6 +145,13 @@
   }
 }
 
+/* 平板横屏：高度才是瓶颈，别再让 440px 的固定封顶吃掉整块可用空间 */
+@media (min-width: 900px) and (orientation: landscape) {
+  .board {
+    --size: min(620px, calc(100vh - 240px));
+  }
+}
+
 @media (max-width: 560px) {
   .stagePad {
     padding: 4px;

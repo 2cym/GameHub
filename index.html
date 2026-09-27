@@ -5,7 +5,34 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="description" content="GameHub — 收录多款精心打造的浏览器小游戏，即开即玩，全球排行榜等你挑战。" />
+    <meta name="color-scheme" content="dark light" />
     <meta name="theme-color" content="#0b0e1a" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="GameHub" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <script>
+      // 在样式表生效前落主题，避免亮色用户首帧看到暗色背景。
+      // 判断逻辑必须与 src/lib/theme.ts 的 getTheme 保持一致：
+      // 显式选择（'dark' / 'light'）优先，否则跟随系统偏好，都没有则暗色默认。
+      ;(function () {
+        var saved = null
+        try {
+          saved = localStorage.getItem('gamehub.theme.v1')
+        } catch (e) {}
+        if (
+          saved !== 'dark' &&
+          saved !== 'light' &&
+          window.matchMedia &&
+          window.matchMedia('(color-scheme: light)').matches
+        ) {
+          saved = 'light'
+        }
+        if (saved === 'light') document.documentElement.setAttribute('data-theme', 'light')
+      })()
+    </script>
     <title>GameHub · 小游戏集合</title>
   </head>
   <body>

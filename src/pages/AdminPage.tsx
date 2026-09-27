@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { adminApi, type AdminAnalytics, type AdminDebug, type AdminStats, type AdminUserDetail, type AdminUserRow } from '../lib/api'
+import { Avatar } from '../components/Avatar'
+import { adminApi, aiSettingsApi, fileApi, messageApi, type AiProvider, type AiSettingsResponse, type AiTestResult, type AdminAnalytics, type AdminDebug, type AdminStats, type AdminUserDetail, type AdminUserRow, type FileRow, type MessageRow, type StorageInfo } from '../lib/api'
 import { useAuth } from '../stores/auth'
 import { toast } from '../stores/toast'
 import styles from './Admin.module.css'
 
-type Tab = 'dashboard' | 'users' | 'analytics' | 'debug'
+type Tab = 'dashboard' | 'users' | 'analytics' | 'debug' | 'messages' | 'files' | 'settings'
 
 const PAGE_SIZE = 15
 
@@ -32,6 +33,7 @@ export function AdminPage() {
   const [stats, setStats] = useState<AdminStats | null>(null)
   const [debug, setDebug] = useState<AdminDebug | null>(null)
   const [analytics, setAnalytics] = useState<AdminAnalytics | null>(null)
+  const [messages, setMessages] = useState<MessageRow[]>([])
   const [users, setUsers] = useState<AdminUserRow[]>([])
   const [userTotal, setUserTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -66,8 +68,11 @@ export function AdminPage() {
         {(
           [
             ['dashboard', '系统概览'],
+            ['settings', 'AI 设置'],
             ['users', '用户管理'],
             ['analytics', '流量监控'],
+            ['messages', '留言板'],
+            ['files', '网盘'],
             ['debug', 'Debug 诊断'],
           ] as [Tab, string][]
         ).map(([key, label]) => (
@@ -88,6 +93,8 @@ export function AdminPage() {
           onLoad={() => { setLoading(true); adminApi.stats().then(setStats).catch(() => toast('加载失败', 'error')).finally(() => setLoading(false)) }}
         />
       )}
+
+      {tab === 'settings' && <AiSettingsTab />}
 
       {tab === 'users' && (
         <UsersTab
@@ -112,6 +119,17 @@ export function AdminPage() {
           onLoad={() => { setLoading(true); adminApi.analytics().then(setAnalytics).catch(() => toast('加载失败', 'error')).finally(() => setLoading(false)) }}
         />
       )}
+
+      {tab === 'messages' && (
+        <MessagesTab
+          messages={messages}
+          loading={loading}
+          onLoad={() => { setLoading(true); messageApi.list(100, 0).then((r) => setMessages(r.messages)).catch(() => toast('加载失败', 'error')).finally(() => setLoading(false)) }}
+          onDelete={doDeleteMessage}
+        />
+      )}
+
+      {tab === 'files' && <FilesTab />}
 
       {tab === 'debug' && (
         <DebugTab
@@ -190,6 +208,17 @@ export function AdminPage() {
       toast(err instanceof Error ? err.message : '操作失败', 'error')
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function doDeleteMessage(id: number) {
+    if (!confirm('确定删除此留言？')) return
+    try {
+      await messageApi.delete(id)
+      toast('留言已删除', 'success')
+      messageApi.list(100, 0).then((r) => setMessages(r.messages)).catch(() => {})
+    } catch {
+      toast('删除失败', 'error')
     }
   }
 }
@@ -278,6 +307,215 @@ function DashboardTab({
           </table>
         </div>
       )}
+    </div>
+  )
+}
+
+// ---------- AI Settings Tab ----------
+
+const PROVIDER_LABEL: Record<AiProvider, string> = {
+  api: 'API 接口',
+  cloudflare: 'Cloudflare Workers AI',
+  off: '关闭',
+}
+
+function AiSettingsTab() {
+  const [data, setData] = useState<AiSettingsResponse | null>(null)
+  const [provider, setProvider] = useState<AiProvider>('api')
+  const [apiModel, setApiModel] = useState('')
+  const [cfModel, setCfModel] = useState('')
+  const [reasoning, setReasoning] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<AiTestResult | null>(null)
+  const [loadError, setLoadError] = useState('')
+
+  const reload = useCallback(() => {
+    setLoadError('')
+    aiSettingsApi
+      .get()
+      .then((r) => {
+        setData(r)
+        setProvider(r.settings.provider)
+        // 目录可能已更新（模型下架），存过的值可能不在选项里 —— 回落到第一项，
+        // 否则 <select> 会渲染成空白，看起来像页面坏了
+        setApiModel(r.apiModels.some((m) => m.id === r.settings.apiModel)
+          ? r.settings.apiModel : r.apiModels[0]?.id ?? '')
+        setCfModel(r.cfModels.some((m) => m.id === r.settings.cfModel)
+          ? r.settings.cfModel : r.cfModels[0]?.id ?? '')
+        setReasoning(r.settings.reasoning)
+      })
+      // 带上后端返回的原因，否则只有「加载失败」四字无从下手
+      .catch((e: unknown) => setLoadError(e instanceof Error ? e.message : '加载 AI 设置失败'))
+  }, [])
+
+  useEffect(() => {
+    reload()
+  }, [reload])
+
+  if (!data) {
+    if (loadError) {
+      return (
+        <div style={{ textAlign: 'center', padding: '40px 16px' }}>
+          <p style={{ margin: '0 0 12px', color: 'var(--danger)' }}>{loadError}</p>
+          <button className={styles.actionBtn} onClick={reload}>重试</button>
+        </div>
+      )
+    }
+    return <div className={styles.loading}><span className={styles.spinner} /> 加载中…</div>
+  }
+
+  const models = provider === 'cloudflare' ? data.cfModels : data.apiModels
+  const modelId = provider === 'cloudflare' ? cfModel : apiModel
+  const current = models.find((m) => m.id === modelId)
+  const patch = { provider, apiModel, cfModel, reasoning }
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const res = await aiSettingsApi.save(patch)
+      setData((d) => (d ? { ...d, settings: res.settings, capabilities: res.capabilities } : d))
+      toast('AI 设置已保存，下一手棋生效', 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '保存失败', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const runTest = async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      setTestResult(await aiSettingsApi.test(patch))
+    } catch (e) {
+      setTestResult({
+        ok: false,
+        provider,
+        model: modelId,
+        error: e instanceof Error ? e.message : '请求失败',
+      })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <div>
+      <div className={styles.section}>
+        <h2 className={styles.sectionTitle}>AI 提供方</h2>
+        <div className={styles.segGroup}>
+          {(['api', 'cloudflare', 'off'] as AiProvider[]).map((p) => (
+            <button
+              key={p}
+              className={`${styles.seg} ${provider === p ? styles.segActive : ''}`}
+              onClick={() => { setProvider(p); setTestResult(null) }}
+            >
+              {PROVIDER_LABEL[p]}
+            </button>
+          ))}
+        </div>
+        <div className={styles.capRow}>
+          <span className={`${styles.checkDot} ${data.capabilities.api.configured ? styles.checkDotOk : styles.checkDotFail}`} />
+          <span>
+            API 接口{data.capabilities.api.configured
+              ? `：已配置 ${data.capabilities.api.baseUrl}`
+              : '：凭据未配置（AI_BASE_URL / AI_API_KEY）'}
+          </span>
+        </div>
+        <div className={styles.capRow}>
+          <span className={`${styles.checkDot} ${data.capabilities.cloudflare.available ? styles.checkDotOk : styles.checkDotFail}`} />
+          <span>
+            {data.capabilities.cloudflare.available
+              ? 'Workers AI：可用'
+              : 'Workers AI：未开通（Cloudflare 控制台 → Workers & Pages → Workers AI 启用）'}
+          </span>
+        </div>
+      </div>
+
+      {provider === 'off' ? (
+        <div className={styles.section}>
+          <p className={styles.hint}>
+            已关闭：四个棋类的中等/困难难度全部使用本地 AI，不会调用任何外部模型，也不会产生费用。
+          </p>
+        </div>
+      ) : (
+        <div className={styles.section}>
+          <h2 className={styles.sectionTitle}>模型</h2>
+          <select
+            className={`input ${styles.selectField}`}
+            value={modelId}
+            onChange={(e) => {
+              if (provider === 'cloudflare') setCfModel(e.target.value)
+              else setApiModel(e.target.value)
+              setTestResult(null)
+            }}
+          >
+            {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+          {current && <p className={styles.hint}>{current.desc}</p>}
+          {current?.temp !== undefined && (
+            <p className={styles.hint}>该模型仅接受 temperature={current.temp}，已自动固定。</p>
+          )}
+        </div>
+      )}
+
+      <div className={styles.section}>
+        <h2 className={styles.sectionTitle}>模型推理</h2>
+        <div className={styles.segGroup}>
+          <button
+            className={`${styles.seg} ${!reasoning ? styles.segActive : ''}`}
+            onClick={() => { setReasoning(false); setTestResult(null) }}
+          >
+            关闭（推荐）
+          </button>
+          <button
+            className={`${styles.seg} ${reasoning ? styles.segActive : ''}`}
+            onClick={() => { setReasoning(true); setTestResult(null) }}
+          >
+            开启
+          </button>
+        </div>
+        <p className={styles.hint}>
+          {reasoning
+            ? '开启：模型先思考再落子，判断可能更好，但单手耗时可能从 1–4 秒升到 20–40 秒；部分模型会把 token 预算烧在推理上、返回空正文，此时自动回落本地 AI。'
+            : '关闭：模型直接输出候选走法，单手约 1–4 秒。实测各模型关闭推理后都能正常返回候选。'}
+          {provider === 'cloudflare' ? '（该选项仅对 API 接口生效）' : ''}
+        </p>
+      </div>
+
+      <div className={styles.section}>
+        <div className={styles.toolbar}>
+          <button className="btn btn-primary" disabled={saving || testing} onClick={save}>
+            {saving ? '保存中…' : '保存设置'}
+          </button>
+          <button className="btn btn-ghost" disabled={saving || testing || provider === 'off'} onClick={runTest}>
+            {testing ? '测试中…' : '测试当前配置'}
+          </button>
+        </div>
+        <p className={styles.hint}>
+          测试会真实调用一次模型（用国际象棋开局局面），确认它能返回合法候选后再切换。
+        </p>
+        {testResult && (
+          <div className={`${styles.testResult} ${testResult.ok ? styles.testOk : styles.testFail}`}>
+            <div className={styles.testTitle}>
+              <span>{testResult.ok ? '✓ 配置可用' : '✕ 配置不可用'}</span>
+              <span className="font-mono">
+                {testResult.model}
+                {typeof testResult.ms === 'number' ? ` · ${testResult.ms}ms` : ''}
+              </span>
+            </div>
+            {testResult.ok && testResult.parsed && (
+              <div className="font-mono">{JSON.stringify(testResult.parsed)}</div>
+            )}
+            {!testResult.ok && testResult.error && <div>{testResult.error}</div>}
+            {!testResult.ok && testResult.hint && (
+              <div style={{ opacity: 0.75, marginTop: 4 }}>提示：{testResult.hint}</div>
+            )}
+            {testResult.raw && <pre className={styles.testRaw}>{testResult.raw}</pre>}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -508,7 +746,7 @@ function UserDetailDrawer({
         <button className={`btn btn-ghost ${styles.drawerClose}`} onClick={onClose}>✕</button>
 
         <div className={styles.drawerUser}>
-          <div className={styles.drawerAvatar}>{detail.username[0].toUpperCase()}</div>
+          <Avatar className={styles.drawerAvatar} emoji={detail.avatarEmoji} color={detail.avatarColor} fallback={detail.username} size={48} />
           <div>
             <div style={{ fontSize: 18, fontWeight: 700 }}>{detail.username}</div>
             <div className={styles.drawerMeta}>{detail.email}</div>
@@ -646,4 +884,235 @@ function AnalyticsTab({
 function fmtDateTimeStr(iso: string): string {
   const d = new Date(iso)
   return `${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')} ${d.getHours().toString().padStart(2, '0')}:00`
+}
+
+// ---------- Messages Tab ----------
+
+function MessagesTab({
+  messages, loading, onLoad, onDelete,
+}: {
+  messages: MessageRow[]
+  loading: boolean
+  onLoad: () => void
+  onDelete: (id: number) => void
+}) {
+  const [addName, setAddName] = useState('')
+  const [addContent, setAddContent] = useState('')
+  const [addBusy, setAddBusy] = useState(false)
+
+  useEffect(() => { onLoad() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const addMessage = async () => {
+    const name = addName.trim()
+    const content = addContent.trim()
+    if (!name || !content) { toast('请填写昵称和留言', 'error'); return }
+    setAddBusy(true)
+    try {
+      await messageApi.create(name, content)
+      setAddContent('')
+      toast('留言已添加', 'success')
+      onLoad()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '添加失败', 'error')
+    } finally {
+      setAddBusy(false)
+    }
+  }
+
+  if (loading && messages.length === 0) return <div className={styles.loading}><span className={styles.spinner} /> 加载中…</div>
+
+  return (
+    <div>
+      <div className={styles.section}>
+        <h2 className={styles.sectionTitle}>留言板（{messages.length} 条）</h2>
+        <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+          <input className="input" style={{ maxWidth: 160 }} type="text" placeholder="昵称" maxLength={20}
+            value={addName} onChange={(e) => setAddName(e.target.value)} />
+          <input className="input" style={{ flex: 1, minWidth: 200 }} type="text" placeholder="留言内容…" maxLength={500}
+            value={addContent} onChange={(e) => setAddContent(e.target.value)} />
+          <button className="btn btn-primary" disabled={addBusy} onClick={addMessage}>
+            {addBusy ? '添加中…' : '添加留言'}
+          </button>
+        </div>
+        {messages.length === 0 ? (
+          <div className={styles.loading}>暂无留言</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {messages.map((m) => (
+              <div key={m.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: 14, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg, var(--primary), var(--accent))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+                  {m.username[0]?.toUpperCase()}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <strong style={{ fontSize: 14 }}>{m.username}</strong>
+                    <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{fmtDateTime(m.createdAt)}</span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: 'var(--text)' }}>{m.content}</p>
+                </div>
+                <button className={`${styles.actionBtn} ${styles.actionBtnDanger}`} onClick={() => onDelete(m.id)} style={{ flexShrink: 0 }}>删除</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ---------- Files Tab (网盘) ----------
+
+function fmtSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+  return `${(bytes / 1024 / 1024).toFixed(2)}MB`
+}
+
+function FilesTab() {
+  const [files, setFiles] = useState<FileRow[]>([])
+  const [storage, setStorage] = useState<StorageInfo>({ used: 0, limit: 104857600, percent: 0 })
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [uploading, setUploading] = useState(false)
+
+  const loadAll = () => {
+    setLoading(true)
+    Promise.all([fileApi.list(), fileApi.storage()])
+      .then(([f, s]) => { setFiles(f.files); setStorage(s) })
+      .catch(() => toast('加载失败', 'error'))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { loadAll() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleUpload = async (file: File) => {
+    if (file.size > 5 * 1024 * 1024) {
+      toast('单个文件不能超过 5MB', 'error')
+      return
+    }
+    if (storage.used + file.size > storage.limit) {
+      toast('存储空间不足', 'error')
+      return
+    }
+    setUploading(true)
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve((reader.result as string).split(',')[1])
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+      await fileApi.upload(file.name, base64, file.type || 'application/octet-stream')
+      toast('上传成功', 'success')
+      loadAll()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '上传失败', 'error')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleDelete = async (id: number) => {
+    if (!confirm('确定删除此文件？')) return
+    setBusy(true)
+    try {
+      await fileApi.remove(id)
+      toast('已删除', 'success')
+      loadAll()
+    } catch {
+      toast('删除失败', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleDownload = async (id: number) => {
+    try {
+      await fileApi.download(id)
+    } catch {
+      toast('下载失败', 'error')
+    }
+  }
+
+  const onFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) handleUpload(file)
+    e.target.value = ''
+  }
+
+  const usedPct = Math.min(100, (storage.used / storage.limit) * 100)
+  const barColor = usedPct > 90 ? '#ef4444' : usedPct > 70 ? '#f59e0b' : '#22c55e'
+
+  return (
+    <div>
+      <div className={styles.section}>
+        <h2 className={styles.sectionTitle}>存储用量</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 8 }}>
+          <div style={{ flex: 1, height: 20, background: 'var(--surface-2)', borderRadius: 10, overflow: 'hidden' }}>
+            <div style={{ width: `${usedPct}%`, height: '100%', background: barColor, borderRadius: 10, transition: 'width 0.3s' }} />
+          </div>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14, whiteSpace: 'nowrap' }}>
+            {fmtSize(storage.used)} / 100MB ({storage.percent}%)
+          </span>
+        </div>
+      </div>
+
+      <div className={styles.section}>
+        <h2 className={styles.sectionTitle}>上传文件</h2>
+        <label style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          gap: 10, padding: 32, border: '2px dashed var(--border-strong)', borderRadius: 12,
+          cursor: 'pointer', transition: 'border-color 0.15s',
+        }}
+          onDragOver={(e) => { e.preventDefault() }}
+          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleUpload(f) }}
+        >
+          <span style={{ fontSize: 36 }}>📁</span>
+          <span style={{ fontSize: 14, color: 'var(--text-dim)' }}>
+            {uploading ? '上传中…' : '点击或拖拽文件到此处（单个文件最大 5MB）'}
+          </span>
+          <input type="file" style={{ display: 'none' }} onChange={onFileSelect} disabled={uploading} />
+        </label>
+      </div>
+
+      <div className={styles.section}>
+        <h2 className={styles.sectionTitle}>文件列表（{files.length}）</h2>
+        {loading ? (
+          <div className={styles.loading}><span className={styles.spinner} /> 加载中…</div>
+        ) : files.length === 0 ? (
+          <div className={styles.loading}>暂无文件</div>
+        ) : (
+          <table className={styles.userTable}>
+            <thead>
+              <tr>
+                <th>文件名</th>
+                <th>大小</th>
+                <th>分块</th>
+                <th>上传时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {files.map((f) => (
+                <tr key={f.id}>
+                  <td style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.filename}>
+                    📄 {f.filename}
+                  </td>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>{fmtSize(f.size)}</td>
+                  <td>{f.totalChunks}</td>
+                  <td>{fmtDateTime(f.createdAt)}</td>
+                  <td>
+                    <div className={styles.actions}>
+                      <button className={styles.actionBtn} disabled={busy} onClick={() => handleDownload(f.id)}>下载</button>
+                      <button className={`${styles.actionBtn} ${styles.actionBtnDanger}`} disabled={busy} onClick={() => handleDelete(f.id)}>删除</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
 }

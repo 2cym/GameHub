@@ -14,9 +14,23 @@
       "database_id": "5b2be9ae-e434-4517-99cf-45edda4db070"
     }
   ],
+  // Cloudflare Workers AI：仅在后台把 AI 提供方切到 cloudflare 时才使用。
+  // 绑定名必须与控制台一致（控制台建的是 CYM，不是 AI）；
+  // 代码里同时兼容 env.CYM / env.AI，改名不会让提供方悄悄失效。
+  // 未开通或部署后 env 里没有该绑定 → 自动回落本地 AI。
+  "ai": {
+    "binding": "CYM"
+  },
   "vars": {
     // 发件人；RESEND_API_KEY 走 npx wrangler secret put，不写入本文件
-    "MAIL_FROM": "GameHub <onboarding@resend.dev>"
+    "MAIL_FROM": "GameHub <onboarding@resend.dev>",
+    // 棋类 AI 服务地址（OpenAI 兼容 /v1）
+    // 对应密钥走 `npx wrangler secret put AI_API_KEY`，不写入本文件
+    "AI_BASE_URL": "https://token.sensenova.cn/v1",
+    // Turnstile 站点密钥（公开值，Cloudflare 控制台 Turnstile 创建后获取）
+    // 留空 = 站点未启用人机验证，游客无法使用 AI（登录账号不受影响）
+    // 对应的密钥走 `npx wrangler secret put TURNSTILE_SECRET`，不写入本文件
+    "TURNSTILE_SITE_KEY": ""
   },
   "observability": {
     "enabled": true

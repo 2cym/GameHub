@@ -241,8 +241,8 @@ function findKing(board: Board, side: Side): number {
   return -1
 }
 
-/** 两将是否对面（白脸将）：同列且中间无子。 */
-function kingsFace(board: Board): boolean {
+/** 两将是否对面（白脸将）：同列且中间无子。对局双方都会因此被判负，属硬规则。 */
+export function kingsFace(board: Board): boolean {
   const rk = findKing(board, 'r')
   const bk = findKing(board, 'b')
   if (rk < 0 || bk < 0) return false
@@ -381,6 +381,41 @@ export function aiMove(
     return top[Math.floor(Math.random() * top.length)]
   }
   const opp: Side = side === 'r' ? 'b' : 'r'
+  let bestScore = -Infinity
+  let best: Move[] = []
+  for (const m of moves) {
+    const nb = applyMove(board, m)
+    const score = -negamax(nb, opp, depth - 1, -Infinity, Infinity)
+    if (score > bestScore) {
+      bestScore = score
+      best = [m]
+    } else if (score === bestScore) {
+      best.push(m)
+    }
+  }
+  return best[Math.floor(Math.random() * best.length)]
+}
+
+// ===== 走法文本序列化（供 AI 模型 候选交换） =====
+
+/** Move → "从格-到格"，如 30-39 */
+export function moveToText(m: Move): string {
+  return `${m.from}-${m.to}`
+}
+
+/**
+ * 在给定候选集合内做 α-β 搜索选最优（AI 模型 粗筛后本地精筛）。
+ * 候选为空返回 null。
+ */
+export function bestOf(
+  board: Board,
+  side: Side,
+  candidates: Move[],
+  depth: number,
+): Move | null {
+  if (candidates.length === 0) return null
+  const opp: Side = side === 'r' ? 'b' : 'r'
+  const moves = candidates.slice().sort((a, b) => moveScore(board, b) - moveScore(board, a))
   let bestScore = -Infinity
   let best: Move[] = []
   for (const m of moves) {

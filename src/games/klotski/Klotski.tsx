@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import type { GameProps, GameStatus } from '../../lib/types'
 import { GameOverlay } from '../shared/GameOverlay'
+import { useSaveGame } from '../shared/saveGame'
 import { toast } from '../../stores/toast'
 import shared from '../shared/game.module.css'
 import styles from './Klotski.module.css'
@@ -27,6 +28,17 @@ interface DragInfo {
   originX: number
   originY: number
   moved: boolean
+}
+
+/** 存档里最多保留多少步撤销记录，避免玩久了撑爆 localStorage */
+const MAX_HISTORY = 50
+
+interface KlotskiSave {
+  layoutIdx: number
+  pieces: Piece[]
+  moves: number
+  totalScore: number
+  history: Piece[][]
 }
 
 export default function Klotski({ onGameOver }: GameProps) {
@@ -60,10 +72,36 @@ export default function Klotski({ onGameOver }: GameProps) {
     movesRef.current = 0
   }, [])
 
+  // 命名成 clearSaveNow，避免和本组件「重置本关」的 reset 冲突
+  const { hasSave, resume, reset: clearSaveNow } = useSaveGame<KlotskiSave>(
+    'klotski',
+    status,
+    () =>
+      pieces.length > 0
+        ? {
+            layoutIdx,
+            pieces: clonePieces(pieces),
+            moves,
+            totalScore,
+            history: history.slice(-MAX_HISTORY).map(clonePieces),
+          }
+        : null,
+    (s) => {
+      setLayoutIdx(s.layoutIdx)
+      setPieces(clonePieces(s.pieces))
+      setMoves(s.moves)
+      setScore(s.totalScore)
+      setHistory(s.history ?? [])
+      movesRef.current = s.moves
+    },
+    () => totalScore,
+  )
+
   const start = useCallback(() => {
+    clearSaveNow()
     loadLayout(layoutRef.current)
     setStatus('running')
-  }, [loadLayout])
+  }, [loadLayout, clearSaveNow])
 
   const finish = useCallback((moveCount: number) => {
     const layout = LAYOUTS[layoutRef.current]
@@ -302,6 +340,10 @@ export default function Klotski({ onGameOver }: GameProps) {
             onStart={start}
             onResume={() => setStatus('running')}
             onRestart={start}
+            hasSave={hasSave}
+            onResumeSave={() => {
+              if (resume()) setStatus('running')
+            }}
             idleTitle="华容道"
             idleHint="拖动（或点击）滑动方块，把曹操移到底部出口。步数越少得分越高"
           />

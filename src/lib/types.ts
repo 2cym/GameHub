@@ -1,11 +1,17 @@
-export interface User {
+/** 头像资料。avatarColor 是调色板下标；接口以字符串返回，由 <Avatar /> 做边界校正 */
+export interface AvatarInfo {
+  avatarEmoji?: string
+  avatarColor?: number | string
+}
+
+export interface User extends AvatarInfo {
   id: string
   email: string
   username: string
   isAdmin?: boolean
 }
 
-export interface LeaderEntry {
+export interface LeaderEntry extends AvatarInfo {
   username: string
   score: number
 }

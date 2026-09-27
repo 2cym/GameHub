@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import type { GameProps, GameStatus } from '../../lib/types'
 import { GameOverlay } from '../shared/GameOverlay'
 import shared from '../shared/game.module.css'
+import { useSaveGame } from '../shared/saveGame'
 import styles from './2048.module.css'
 import { useGameKeys } from '../shared/useGameKeys'
 import { toast } from '../../stores/toast'
@@ -143,13 +144,28 @@ export default function Game2048({ onGameOver }: GameProps) {
   const gameOverRef = useRef(onGameOver)
   gameOverRef.current = onGameOver
 
+  const { hasSave, resume, reset } = useSaveGame(
+    'g2048',
+    status,
+    () => (tiles.length > 0 ? { tiles, score, maxTile } : null),
+    (s) => {
+      // 清掉入场/合并标记，否则恢复时所有方块都会重放一次生成动画
+      setTiles(s.tiles.map((t) => ({ ...t, isNew: false, merged: false })))
+      setMaxTile(s.maxTile)
+      scoreRef.current = s.score
+      setScore(s.score)
+    },
+    () => scoreRef.current,
+  )
+
   const start = useCallback(() => {
+    reset()
     setTiles(spawn([], 2))
     setScore(0)
     setMaxTile(2)
     scoreRef.current = 0
     setStatus('running')
-  }, [])
+  }, [reset])
 
   const togglePause = useCallback(() => {
     if (statusRef.current === 'running') setStatus('paused')
@@ -263,6 +279,10 @@ export default function Game2048({ onGameOver }: GameProps) {
           onStart={start}
           onResume={() => setStatus('running')}
           onRestart={start}
+          hasSave={hasSave}
+          onResumeSave={() => {
+            if (resume()) setStatus('running')
+          }}
           idleHint="方向键 / WASD 或滑动屏幕，合并相同数字冲击 2048"
         />
       </div>

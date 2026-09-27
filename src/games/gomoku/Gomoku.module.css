@@ -17,15 +17,14 @@
     460px,
     calc(100vw - 2 * var(--container-pad) - 2 * var(--game-pad-x) - 28px)
   );
-  --gap: calc(var(--size) / 15);
   display: grid;
-  grid-template-columns: repeat(15, var(--gap));
-  grid-template-rows: repeat(15, var(--gap));
-  width: max-content;
-  max-width: 100%;
+  grid-template-columns: repeat(15, 1fr);
+  grid-template-rows: repeat(15, 1fr);
+  width: 100%;
+  max-width: var(--size);
   aspect-ratio: 1 / 1;
   margin: 0 auto;
-  padding: calc(var(--gap) * 0.5);
+  padding: 10px;
   background: linear-gradient(145deg, #e8c884, #c89854);
   border-radius: 8px;
   box-shadow: var(--shadow);
@@ -34,8 +33,6 @@
 
 .cell {
   position: relative;
-  width: var(--gap);
-  height: var(--gap);
   cursor: pointer;
 }
 /* 格线：用伪元素画十字 */
@@ -188,6 +185,13 @@
   .controls {
     max-width: 220px;
     padding-top: 4px;
+  }
+}
+
+/* 平板横屏：按剩余高度放大棋盘 */
+@media (min-width: 900px) and (orientation: landscape) {
+  .board {
+    --size: min(640px, calc(100vh - 230px));
   }
 }
 

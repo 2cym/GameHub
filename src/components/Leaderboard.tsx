@@ -1,4 +1,5 @@
 import type { LeaderEntry } from '../lib/types'
+import { Avatar } from './Avatar'
 import styles from './Leaderboard.module.css'
 
 const MEDALS = ['🥇', '🥈', '🥉']
@@ -29,6 +30,7 @@ export function Leaderboard({ entries, loading, meUsername }: LeaderboardProps) 
           <span className={`${styles.rank} ${i < 3 ? styles.medal : ''}`}>
             {i < 3 ? MEDALS[i] : i + 1}
           </span>
+          <Avatar emoji={e.avatarEmoji} color={e.avatarColor} fallback={e.username} size={26} />
           <span className={styles.name}>{e.username}</span>
           <span className={styles.score}>{e.score.toLocaleString()}</span>
         </li>

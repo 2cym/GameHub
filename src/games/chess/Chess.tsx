@@ -1,17 +1,22 @@
 import { useCallback, useRef, useState } from 'react'
 import type { GameProps, GameStatus } from '../../lib/types'
 import { GameOverlay } from '../shared/GameOverlay'
+import { useSaveGame } from '../shared/saveGame'
+import { aiEngineMove } from '../shared/aiEngine'
 import { toast } from '../../stores/toast'
 import shared from '../shared/game.module.css'
 import styles from './Chess.module.css'
 import {
   aiMove,
   applyMove,
+  bestOf,
   initialState,
   isCheckmate,
   isInCheck,
   isStalemate,
+  legalMoves,
   legalTargets,
+  moveToText,
   type Difficulty,
   type Move,
   type Side,
@@ -45,6 +50,8 @@ export default function Chess({ onGameOver }: GameProps) {
   const [result, setResult] = useState<'win' | 'lose' | 'draw' | null>(null)
   const [score, setScore] = useState(0)
   const [thinking, setThinking] = useState(false)
+  /** 上一手 AI 实际使用的引擎；只有真的用到 CF 才显示标记 */
+  const [aiSrc, setAiSrc] = useState<'cf' | 'local'>('local')
 
   const statusRef = useRef(status)
   statusRef.current = status
@@ -56,7 +63,8 @@ export default function Chess({ onGameOver }: GameProps) {
   diffRef.current = difficulty
   const gameOverRef = useRef(onGameOver)
   gameOverRef.current = onGameOver
-  const aiTimer = useRef<number | null>(null)
+  /** AI 回合序号：每次发起 +1，旧回合的异步结果到达时直接丢弃 */
+  const aiRunId = useRef(0)
 
   const aiSide: Side = playerColor === 'w' ? 'b' : 'w'
 
@@ -108,18 +116,50 @@ export default function Chess({ onGameOver }: GameProps) {
     [checkEnd],
   )
 
-  const doAIMove = useCallback(() => {
+  const doAIMove = useCallback(async () => {
+    if (statusRef.current !== 'running') return
+    const runId = ++aiRunId.current
     setThinking(true)
-    const timer = window.setTimeout(() => {
-      const mv = aiMove(stateRef.current, diffRef.current)
-      if (mv) playMove(stateRef.current, mv, aiSide)
-      setThinking(false)
-    }, 450)
-    aiTimer.current = timer
+    const { move, engine } = await aiEngineMove<Move>({
+      game: 'chess',
+      level: diffRef.current,
+      legal: legalMoves(stateRef.current).map((m) => ({ text: moveToText(m), move: m })),
+      side: aiSide,
+      search: (pool) => bestOf(stateRef.current, pool, diffRef.current === 'hard' ? 4 : 2),
+      local: () => aiMove(stateRef.current, diffRef.current),
+    })
+    if (runId !== aiRunId.current || statusRef.current !== 'running') return
+    setAiSrc(engine)
+    if (move) playMove(stateRef.current, move, aiSide)
+    setThinking(false)
   }, [aiSide, playMove])
 
+  const { hasSave, resume, reset } = useSaveGame<{
+    state: State
+    selected: number
+    lastMove: Move | null
+  }>(
+    'chess',
+    status,
+    () => ({ state, selected, lastMove }),
+    (s) => {
+      aiRunId.current++
+      setState(s.state)
+      stateRef.current = s.state
+      setSelected(s.selected)
+      setTargets([])
+      setLastMove(s.lastMove)
+      setResult(null)
+      setScore(0)
+      setThinking(false)
+      setAiSrc('local')
+    },
+    () => score,
+  )
+
   const start = useCallback(() => {
-    if (aiTimer.current) window.clearTimeout(aiTimer.current)
+    reset()
+    aiRunId.current++
     const s = initialState()
     setState(s)
     stateRef.current = s
@@ -129,16 +169,13 @@ export default function Chess({ onGameOver }: GameProps) {
     setResult(null)
     setScore(0)
     setThinking(false)
+    setAiSrc('local')
     setStatus('running')
-    if (playerRef.current === 'b') {
-      setThinking(true)
-      aiTimer.current = window.setTimeout(() => {
-        const mv = aiMove(s, diffRef.current)
-        if (mv) playMove(s, mv, 'w')
-        setThinking(false)
-      }, 450)
-    }
-  }, [playMove])
+    // setStatus 要到下一轮渲染才同步进 statusRef，而 doAIMove 读的是 ref；
+    // 不手动补一下，选「执黑」开局时 AI 那一手会被自己的守卫条件挡掉
+    statusRef.current = 'running'
+    if (playerRef.current === 'b') void doAIMove()
+  }, [doAIMove, reset])
 
   const onCellClick = useCallback(
     (i: number) => {
@@ -228,11 +265,18 @@ export default function Chess({ onGameOver }: GameProps) {
           <span className={shared.hudLabel}>AI</span>
           <span className={shared.hudValue}>
             {DIFFS.find((d) => d.id === difficulty)?.label}
+            {difficulty !== 'easy' && aiSrc === 'cf' && (
+              <span className={shared.aiTag} title="本手由 AI 模型生成候选">
+                · AI
+              </span>
+            )}
           </span>
         </div>
         {thinking && (
           <div className={shared.hudItem}>
-            <span className={shared.hudValue}>思考中…</span>
+            <span className={`${shared.hudValue} ${shared.thinking}`}>
+              {difficulty === 'easy' ? '思考中…' : 'AI 思考中…'}
+            </span>
           </div>
         )}
       </div>
@@ -250,6 +294,14 @@ export default function Chess({ onGameOver }: GameProps) {
             onStart={start}
             onResume={() => setStatus('running')}
             onRestart={start}
+            hasSave={hasSave}
+            onResumeSave={() => {
+              if (!resume()) return
+              setStatus('running')
+              statusRef.current = 'running'
+              // 存档时正轮到 AI，续接就要把这一手补上
+              if (stateRef.current.turn !== playerRef.current) void doAIMove()
+            }}
             idleTitle="国际象棋"
             idleHint="完整规则，含王车易位/吃过路兵/兵升变。选择难度与先后手"
           />
@@ -298,6 +350,7 @@ export default function Chess({ onGameOver }: GameProps) {
           </div>
           <p className={styles.tip}>
             点选己方棋子，绿点为可落子位置。将死对方王即胜。
+            中等/困难由 AI 生成候选（游客需人机验证，失败自动回落本地）。
           </p>
         </div>
       </div>

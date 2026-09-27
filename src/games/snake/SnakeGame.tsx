@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GameProps, GameStatus } from '../../lib/types'
 import { GameOverlay } from '../shared/GameOverlay'
+import { canvasDpr } from '../shared/dpr'
+import { useSaveGame } from '../shared/saveGame'
 import shared from '../shared/game.module.css'
 import styles from './Snake.module.css'
 import { useGameKeys } from '../shared/useGameKeys'
@@ -66,6 +68,27 @@ export default function SnakeGame({ onGameOver }: GameProps) {
   gameOverRef.current = onGameOver
   const stateRef = useRef<SnakeState | null>(null)
 
+  // 命名成 clearSaveNow，避免和本组件「初始化棋盘」的 reset 冲突
+  const { hasSave, resume, reset: clearSaveNow } = useSaveGame<{
+    state: SnakeState
+    length: number
+    score: number
+  }>(
+    'snake',
+    status,
+    () =>
+      stateRef.current
+        ? { state: { ...stateRef.current }, length, score: scoreRef.current }
+        : null,
+    (s) => {
+      stateRef.current = s.state
+      scoreRef.current = s.score
+      setScore(s.score)
+      setLength(s.length)
+    },
+    () => scoreRef.current,
+  )
+
   const reset = useCallback(() => {
     const mid = Math.floor(GRID / 2)
     const snake = [
@@ -88,9 +111,10 @@ export default function SnakeGame({ onGameOver }: GameProps) {
   }, [])
 
   const start = useCallback(() => {
+    clearSaveNow()
     reset()
     setStatus('running')
-  }, [reset])
+  }, [reset, clearSaveNow])
 
   const restart = start
 
@@ -187,7 +211,7 @@ export default function SnakeGame({ onGameOver }: GameProps) {
     if (status !== 'running') return
     let raf = 0
     let last = performance.now()
-    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    const dpr = canvasDpr()
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d')
     if (!ctx) return
@@ -283,7 +307,7 @@ export default function SnakeGame({ onGameOver }: GameProps) {
 
       <div
         className={shared.stage}
-        style={{ maxWidth: `min(${SIZE}px, 100%)`, aspectRatio: '1 / 1' }}
+        style={{ maxWidth: `min(${SIZE}px, 100%, calc(100vh - 230px))`, aspectRatio: '1 / 1' }}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
@@ -291,8 +315,8 @@ export default function SnakeGame({ onGameOver }: GameProps) {
       >
         <canvas
           ref={canvasRef}
-          width={SIZE * 2}
-          height={SIZE * 2}
+          width={SIZE * canvasDpr()}
+          height={SIZE * canvasDpr()}
           className={styles.canvas}
         />
         <GameOverlay
@@ -301,6 +325,10 @@ export default function SnakeGame({ onGameOver }: GameProps) {
           onStart={start}
           onResume={() => setStatus('running')}
           onRestart={restart}
+          hasSave={hasSave}
+          onResumeSave={() => {
+            if (resume()) setStatus('running')
+          }}
           idleHint="滑动屏幕或按方向键 / WASD 控制移动，吃掉光点不断变长"
         />
       </div>

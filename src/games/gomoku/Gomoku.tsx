@@ -1,14 +1,19 @@
 import { useCallback, useRef, useState } from 'react'
 import type { GameProps, GameStatus } from '../../lib/types'
 import { GameOverlay } from '../shared/GameOverlay'
+import { useSaveGame } from '../shared/saveGame'
+import { aiEngineMove } from '../shared/aiEngine'
 import shared from '../shared/game.module.css'
 import styles from './Gomoku.module.css'
 import {
   aiMove,
+  bestOf,
+  candidates,
   emptyBoard,
   idx,
   isFull,
   isWin,
+  moveToText,
   SIZE,
   type Board,
   type Difficulty,
@@ -36,6 +41,9 @@ export default function Gomoku({ onGameOver }: GameProps) {
   const [playerColor, setPlayerColor] = useState<Stone>(1) // 玩家黑或白
   const [over, setOver] = useState<'win' | 'lose' | 'draw' | null>(null)
   const [score, setScore] = useState(0)
+  const [thinking, setThinking] = useState(false)
+  /** 上一手 AI 实际使用的引擎；只有真的用到 CF 才显示标记 */
+  const [aiSrc, setAiSrc] = useState<'cf' | 'local'>('local')
 
   const statusRef = useRef(status)
   statusRef.current = status
@@ -49,7 +57,8 @@ export default function Gomoku({ onGameOver }: GameProps) {
   diffRef.current = difficulty
   const gameOverRef = useRef(onGameOver)
   gameOverRef.current = onGameOver
-  const aiTimer = useRef<number | null>(null)
+  /** AI 回合序号：每次发起 +1，旧回合的异步结果到达时直接丢弃 */
+  const aiRunId = useRef(0)
 
   const ai: Stone = playerColor === 1 ? 2 : 1
 
@@ -87,43 +96,80 @@ export default function Gomoku({ onGameOver }: GameProps) {
     [],
   )
 
-  const doAIMove = useCallback(() => {
+  const doAIMove = useCallback(async () => {
     if (statusRef.current !== 'running') return
-    const timer = window.setTimeout(() => {
-      const mv = aiMove(boardRef.current, ai, diffRef.current)
-      if (mv) place(boardRef.current, mv[0], mv[1], ai)
-    }, 320)
-    aiTimer.current = timer
+    const runId = ++aiRunId.current
+    setThinking(true)
+    const { move, engine } = await aiEngineMove<[number, number]>({
+      game: 'gomoku',
+      level: diffRef.current,
+      legal: candidates(boardRef.current).map((m) => ({ text: moveToText(m), move: m })),
+      side: String(ai),
+      search: (pool) => bestOf(boardRef.current, ai, pool),
+      local: () => aiMove(boardRef.current, ai, diffRef.current),
+    })
+    if (runId !== aiRunId.current || statusRef.current !== 'running') return
+    setAiSrc(engine)
+    if (move) place(boardRef.current, move[0], move[1], ai)
+    setThinking(false)
   }, [ai, place])
 
+  const { hasSave, resume, reset } = useSaveGame<{
+    board: Board
+    current: Stone
+    lastMove: number
+  }>(
+    'gomoku',
+    status,
+    () => ({ board, current, lastMove }),
+    (s) => {
+      aiRunId.current++
+      setBoard(s.board)
+      boardRef.current = s.board
+      setCurrent(s.current)
+      currentRef.current = s.current
+      setLastMove(s.lastMove)
+      setWinLine([])
+      setOver(null)
+      setScore(0)
+      setThinking(false)
+      setAiSrc('local')
+    },
+    () => score,
+  )
+
   const start = useCallback(() => {
-    if (aiTimer.current) window.clearTimeout(aiTimer.current)
-    setBoard(emptyBoard())
+    reset()
+    aiRunId.current++
+    const b = emptyBoard()
+    setBoard(b)
+    boardRef.current = b
     setLastMove(-1)
     setWinLine([])
     setCurrent(1)
     currentRef.current = 1
     setOver(null)
     setScore(0)
+    setThinking(false)
+    setAiSrc('local')
     setStatus('running')
+    // setStatus 要到下一轮渲染才同步进 statusRef，而 doAIMove 读的是 ref；
+    // 不手动补一下，选「白先」开局时 AI 那一手会被自己的守卫条件挡掉
+    statusRef.current = 'running'
     // 若玩家选白，AI 先手
-    if (playerRef.current === 2) {
-      aiTimer.current = window.setTimeout(() => {
-        const mv = aiMove(emptyBoard(), ai, diffRef.current)
-        if (mv) place(emptyBoard(), mv[0], mv[1], ai)
-      }, 320)
-    }
-  }, [ai, place])
+    if (playerRef.current === 2) void doAIMove()
+  }, [doAIMove, reset])
 
   const onCellClick = useCallback(
     (x: number, y: number) => {
       if (statusRef.current !== 'running') return
+      if (thinking) return
       if (currentRef.current !== playerRef.current) return
       if (boardRef.current[idx(x, y)] !== 0) return
       const ended = place(boardRef.current, x, y, playerRef.current)
-      if (!ended) doAIMove()
+      if (!ended) void doAIMove()
     },
-    [place, doAIMove],
+    [place, doAIMove, thinking],
   )
 
   return (
@@ -145,8 +191,20 @@ export default function Gomoku({ onGameOver }: GameProps) {
           <span className={shared.hudLabel}>AI</span>
           <span className={shared.hudValue}>
             {DIFFS.find((d) => d.id === difficulty)?.label}
+            {difficulty !== 'easy' && aiSrc === 'cf' && (
+              <span className={shared.aiTag} title="本手由 AI 模型生成候选">
+                · AI
+              </span>
+            )}
           </span>
         </div>
+        {thinking && (
+          <div className={shared.hudItem}>
+            <span className={`${shared.hudValue} ${shared.thinking}`}>
+              {difficulty === 'easy' ? '思考中…' : 'AI 思考中…'}
+            </span>
+          </div>
+        )}
       </div>
 
       <div className={styles.sideRow}>
@@ -193,6 +251,14 @@ export default function Gomoku({ onGameOver }: GameProps) {
             onStart={start}
             onResume={() => setStatus('running')}
             onRestart={start}
+            hasSave={hasSave}
+            onResumeSave={() => {
+              if (!resume()) return
+              setStatus('running')
+              statusRef.current = 'running'
+              // 存档时正轮到 AI，续接就要把这一手补上
+              if (currentRef.current !== playerRef.current) void doAIMove()
+            }}
             idleTitle="五子棋"
             idleHint="15×15 棋盘，五子连珠即胜。可选难度与先后手"
           />
@@ -241,6 +307,7 @@ export default function Gomoku({ onGameOver }: GameProps) {
           </div>
           <p className={styles.tip}>
             点击棋盘交点落子。形成横、竖、斜任意方向五连即胜。
+            中等/困难由 AI 生成候选（游客需人机验证，失败自动回落本地）。
           </p>
         </div>
       </div>

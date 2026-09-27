@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   /* 色板 */
   --bg: #0b0e1a;
   --bg-deep: #070912;
@@ -21,6 +22,43 @@
   --text-dim: #9aa3c0;
   --text-faint: #5c6584;
 
+  /* 派生色：由主色/强调色推出来的强调描边、文字着色、光晕，
+     原本散落在 global.css 的硬编码值，收进主题便于亮色下正确反相 */
+  --primary-strong: #5a3df0;
+  --primary-tint: #b9a8ff;
+  --primary-border: rgba(124, 92, 255, 0.3);
+  --primary-ring: rgba(124, 92, 255, 0.22);
+  --primary-glow-hover: 0 0 32px rgba(124, 92, 255, 0.5);
+  --primary-glow-1: rgba(124, 92, 255, 0.3);
+  --primary-glow-2: rgba(124, 92, 255, 0.55);
+  --accent-tint: #7ceeff;
+  --accent-border: rgba(0, 229, 255, 0.3);
+  --danger-soft: rgba(255, 107, 107, 0.12);
+  --danger-border: rgba(255, 107, 107, 0.35);
+  --danger-border-strong: rgba(255, 107, 107, 0.5);
+  --danger-strong: #dc2626;
+  --success-soft: rgba(61, 220, 151, 0.12);
+  --success-border: rgba(61, 220, 151, 0.45);
+  --gold-soft: rgba(255, 209, 102, 0.12);
+  --gold-border: rgba(255, 209, 102, 0.35);
+  --gold-glow: 0 0 10px rgba(255, 209, 102, 0.7);
+  --selection: rgba(124, 92, 255, 0.45);
+  --surface-hover: #31406e;
+  --bg-glow-1: rgba(124, 92, 255, 0.14);
+  --bg-glow-2: rgba(0, 229, 255, 0.08);
+  --nav-bg: rgba(11, 14, 26, 0.8);
+  --logo-glow: rgba(124, 92, 255, 0.6);
+  --primary-inset: rgba(124, 92, 255, 0.4);
+  --primary-inset-strong: rgba(124, 92, 255, 0.5);
+  --accent-border-strong: rgba(0, 229, 255, 0.45);
+  --accent-deep: #0ea0c0;
+  --accent-glow: 0 0 12px rgba(0, 229, 255, 0.55);
+  --navy-overlay: rgba(11, 14, 26, 0.86);
+  --slate-1: #3a4468;
+  --slate-2: #232c4a;
+  /* 渐变填充上的文字色：渐变两端都够深，暗色下用纯白 */
+  --on-gradient: #ffffff;
+
   /* 形状与阴影 */
   --radius-sm: 10px;
   --radius: 16px;
@@ -41,6 +79,72 @@
   /* 内边距集中管理，便于移动端整体收紧；游戏内需要满宽的元素可反向抵消 */
   --container-pad: 24px;
   --game-pad-x: 22px;
+}
+
+/* 亮色主题：变量名与 :root 完全一致，切换只换取值，所有 module.css 无需改动。
+   color-scheme 让浏览器原生控件（input、select、滚动条）跟着主题走。 */
+[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f4f6fb;
+  --bg-deep: #e9edf7;
+  --surface: #ffffff;
+  --surface-2: #f7f8fc;
+  --surface-3: #eceff7;
+  --border: rgba(15, 20, 40, 0.10);
+  --border-strong: rgba(15, 20, 40, 0.18);
+
+  --primary: #6a4cff;
+  --primary-soft: rgba(106, 76, 255, 0.12);
+  --accent: #0090ad;
+  --accent-soft: rgba(0, 144, 173, 0.10);
+  --hot: #e8448f;
+  /* 金色是纯状态色，亮色下压暗以保证作文字时对白底有足够对比度 */
+  --gold: #b0770a;
+  --success: #1fae72;
+  --danger: #e04848;
+
+  --text: #131722;
+  --text-dim: #5b6480;
+  --text-faint: #8b93ab;
+
+  --primary-strong: #5638d9;
+  --primary-tint: #4a2fbb;
+  --primary-border: rgba(106, 76, 255, 0.3);
+  --primary-ring: rgba(106, 76, 255, 0.18);
+  --primary-glow-hover: 0 0 28px rgba(106, 76, 255, 0.35);
+  --primary-glow-1: rgba(106, 76, 255, 0.22);
+  --primary-glow-2: rgba(106, 76, 255, 0.38);
+  --accent-tint: #00708a;
+  --accent-border: rgba(0, 144, 173, 0.3);
+  --danger-soft: rgba(224, 72, 72, 0.1);
+  --danger-border: rgba(224, 72, 72, 0.32);
+  --danger-border-strong: rgba(224, 72, 72, 0.5);
+  --danger-strong: #c93b3b;
+  --success-soft: rgba(31, 174, 114, 0.12);
+  --success-border: rgba(31, 174, 114, 0.45);
+  --gold-soft: rgba(176, 119, 10, 0.12);
+  --gold-border: rgba(176, 119, 10, 0.35);
+  --gold-glow: 0 0 10px rgba(176, 119, 10, 0.35);
+  --selection: rgba(106, 76, 255, 0.3);
+  --surface-hover: #dbe0ee;
+  --bg-glow-1: rgba(106, 76, 255, 0.1);
+  --bg-glow-2: rgba(0, 144, 173, 0.07);
+  --nav-bg: rgba(247, 248, 252, 0.85);
+  --logo-glow: rgba(106, 76, 255, 0.35);
+  --primary-inset: rgba(106, 76, 255, 0.35);
+  --primary-inset-strong: rgba(106, 76, 255, 0.45);
+  --accent-border-strong: rgba(0, 144, 173, 0.45);
+  --accent-deep: #00667f;
+  --accent-glow: 0 0 12px rgba(0, 144, 173, 0.4);
+  --navy-overlay: rgba(255, 255, 255, 0.86);
+  --slate-1: #dfe3ef;
+  --slate-2: #c9cfe0;
+  /* 亮色下渐变端点更饱和，白字对比仍达标 */
+  --on-gradient: #ffffff;
+
+  --glow-primary: 0 0 20px rgba(106, 76, 255, 0.20);
+  --glow-accent: 0 0 20px rgba(0, 144, 173, 0.16);
+  --shadow: 0 12px 32px rgba(20, 26, 50, 0.14);
 }
 
 @media (max-width: 768px) {

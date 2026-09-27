@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GameProps, GameStatus } from '../../lib/types'
 import { GameOverlay } from '../shared/GameOverlay'
+import { useSaveGame } from '../shared/saveGame'
 import { useGameKeys } from '../shared/useGameKeys'
 import { toast } from '../../stores/toast'
 import shared from '../shared/game.module.css'
@@ -15,6 +16,52 @@ import {
   type SokobanState,
 } from './sokobanLogic'
 
+/** 存档里的形态：Set 落盘后变成数组 */
+interface SokobanSaveState {
+  width: number
+  height: number
+  walls: number[]
+  goals: number[]
+  boxes: number[]
+  player: number
+  moves: number
+  pushes: number
+}
+
+interface SokobanSave {
+  levelIdx: number
+  state: SokobanSaveState
+  history: SokobanSaveState[]
+  totalScore: number
+  completed: number
+}
+
+function toSaveState(s: SokobanState): SokobanSaveState {
+  return {
+    width: s.width,
+    height: s.height,
+    walls: [...s.walls],
+    goals: [...s.goals],
+    boxes: [...s.boxes],
+    player: s.player,
+    moves: s.moves,
+    pushes: s.pushes,
+  }
+}
+
+function fromSaveState(s: SokobanSaveState): SokobanState {
+  return {
+    width: s.width,
+    height: s.height,
+    walls: new Set(s.walls),
+    goals: new Set(s.goals),
+    boxes: new Set(s.boxes),
+    player: s.player,
+    moves: s.moves,
+    pushes: s.pushes,
+  }
+}
+
 /** 单关得分基数，随关卡递增；步数越少扣分越少。 */
 function levelScore(levelIndex: number, moves: number, pushes: number): number {
   const base = 200 + levelIndex * 100
@@ -22,6 +69,9 @@ function levelScore(levelIndex: number, moves: number, pushes: number): number {
   const eff = Math.max(0, par * 2 - moves) // 步数越少效率越高
   return Math.max(50, base + eff * 2 - pushes)
 }
+
+/** 存档里最多保留多少步撤销记录，避免玩久了撑爆 localStorage */
+const MAX_HISTORY = 50
 
 export default function Sokoban({ onGameOver }: GameProps) {
   const [status, setStatus] = useState<GameStatus>('idle')
@@ -52,14 +102,42 @@ export default function Sokoban({ onGameOver }: GameProps) {
     setLevelIdx(idx)
   }, [])
 
+  // 命名成 clearSaveNow，避免和本组件「重置本关」的 reset 冲突
+  const { hasSave, resume, reset: clearSaveNow } = useSaveGame<SokobanSave>(
+    'sokoban',
+    status,
+    () =>
+      state.width > 0
+        ? {
+            levelIdx,
+            state: toSaveState(state),
+            history: history.slice(-MAX_HISTORY).map(toSaveState),
+            totalScore,
+            completed,
+          }
+        : null,
+    (s) => {
+      setLevelIdx(s.levelIdx)
+      setState(fromSaveState(s.state))
+      setHistory((s.history ?? []).map(fromSaveState))
+      setTotalScore(s.totalScore)
+      setCompleted(s.completed)
+      totalRef.current = s.totalScore
+      completedRef.current = s.completed
+      setDeadlock(hasDeadlock(fromSaveState(s.state)))
+    },
+    () => totalScore,
+  )
+
   const start = useCallback(() => {
+    clearSaveNow()
     setTotalScore(0)
     setCompleted(0)
     totalRef.current = 0
     completedRef.current = 0
     loadLevel(0)
     setStatus('running')
-  }, [loadLevel])
+  }, [loadLevel, clearSaveNow])
 
   const endGame = useCallback(() => {
     setStatus('over')
@@ -244,6 +322,10 @@ export default function Sokoban({ onGameOver }: GameProps) {
           onStart={start}
           onResume={() => setStatus('running')}
           onRestart={start}
+          hasSave={hasSave}
+          onResumeSave={() => {
+            if (resume()) setStatus('running')
+          }}
           idleTitle="推箱子"
           idleHint={`共 ${LEVELS.length} 关。用方向键推动箱子到所有目标点，全部过关得高分`}
         />

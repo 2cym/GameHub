@@ -1,11 +1,20 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { Avatar } from '../components/Avatar'
 import { GAMES } from '../games/registry'
-import { api } from '../lib/api'
+import { api, FAVORITE_CATEGORIES, type FavoriteCategory } from '../lib/api'
+import { AVATAR_EMOJIS, AVATAR_PALETTES, paletteIndex } from '../lib/avatar'
 import { useLocalBests } from '../lib/localBest'
 import type { PersonalBest, ScoreRecord } from '../lib/types'
 import { useAuth } from '../stores/auth'
+import { toast } from '../stores/toast'
 import styles from './Profile.module.css'
+
+const FAV_CATEGORY_ICON: Record<FavoriteCategory, string> = {
+  常玩: '🔥',
+  挑战: '🏆',
+  休闲: '🍃',
+}
 
 function formatTime(ts: number) {
   return new Date(ts * 1000).toLocaleString('zh-CN', {
@@ -17,11 +26,15 @@ function formatTime(ts: number) {
 }
 
 export function ProfilePage() {
-  const { user, status, favorites, openAuth } = useAuth()
+  const { user, status, favorites, favoriteCategory, updateAvatar, openAuth } = useAuth()
   const localBests = useLocalBests()
   const [cloudBests, setCloudBests] = useState<Record<string, number>>({})
   const [recent, setRecent] = useState<ScoreRecord[]>([])
   const [loaded, setLoaded] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [draftEmoji, setDraftEmoji] = useState('')
+  const [draftColor, setDraftColor] = useState(0)
+  const [savingAvatar, setSavingAvatar] = useState(false)
 
   useEffect(() => {
     if (status !== 'authed') {
@@ -59,18 +72,101 @@ export function ProfilePage() {
     )
   }
 
-  const favGames = GAMES.filter((g) => favorites.includes(g.id))
+  const favGames = GAMES.filter((g) => g.id in favorites)
+
+  const openPicker = () => {
+    setDraftEmoji(user.avatarEmoji ?? '')
+    setDraftColor(paletteIndex(user.avatarColor))
+    setPickerOpen(true)
+  }
+
+  const saveAvatar = async () => {
+    if (savingAvatar) return
+    setSavingAvatar(true)
+    try {
+      await updateAvatar({ avatarEmoji: draftEmoji, avatarColor: draftColor })
+      setPickerOpen(false)
+      toast('头像已更新', 'success')
+    } catch {
+      toast('头像更新失败，请重试', 'error')
+    } finally {
+      setSavingAvatar(false)
+    }
+  }
 
   return (
     <main className={`container ${styles.page}`}>
       <section className={styles.userCard}>
-        <span className={styles.bigAvatar}>
-          {user.username.slice(0, 1).toUpperCase()}
-        </span>
-        <div>
+        <Avatar
+          className={styles.bigAvatar}
+          emoji={user.avatarEmoji}
+          color={user.avatarColor}
+          fallback={user.username}
+          size={64}
+        />
+        <div className={styles.userMeta}>
           <h1 className={styles.username}>{user.username}</h1>
           <p className={styles.email}>{user.email}</p>
+          <button type="button" className="btn btn-ghost" onClick={openPicker}>
+            更换头像
+          </button>
         </div>
+        {pickerOpen && (
+          <div className={styles.picker}>
+            <div className={styles.pickerBody}>
+              <div className={styles.pickerPreview}>
+                <Avatar
+                  emoji={draftEmoji}
+                  color={draftColor}
+                  fallback={user.username}
+                  size={64}
+                />
+              </div>
+              <div className={styles.emojiGrid} role="group" aria-label="选择头像表情">
+                <button
+                  type="button"
+                  className={`${styles.emojiOpt} ${draftEmoji === '' ? styles.emojiOn : ''}`}
+                  aria-pressed={draftEmoji === ''}
+                  onClick={() => setDraftEmoji('')}
+                >
+                  字母
+                </button>
+                {AVATAR_EMOJIS.map((e) => (
+                  <button
+                    key={e}
+                    type="button"
+                    className={`${styles.emojiOpt} ${draftEmoji === e ? styles.emojiOn : ''}`}
+                    aria-pressed={draftEmoji === e}
+                    onClick={() => setDraftEmoji(e)}
+                  >
+                    {e}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className={styles.paletteRow} role="group" aria-label="选择头像配色">
+              {AVATAR_PALETTES.map((p, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  className={`${styles.swatch} ${draftColor === i ? styles.swatchOn : ''}`}
+                  style={{ background: `linear-gradient(135deg, ${p.from}, ${p.to})` }}
+                  aria-label={`第 ${i + 1} 种配色`}
+                  aria-pressed={draftColor === i}
+                  onClick={() => setDraftColor(i)}
+                />
+              ))}
+            </div>
+            <div className={styles.pickerActions}>
+              <button type="button" className="btn btn-ghost" onClick={() => setPickerOpen(false)}>
+                取消
+              </button>
+              <button type="button" className="btn btn-primary" disabled={savingAvatar} onClick={saveAvatar}>
+                {savingAvatar ? '保存中…' : '保存头像'}
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className={styles.section}>
@@ -97,13 +193,25 @@ export function ProfilePage() {
       {favGames.length > 0 && (
         <section className={styles.section}>
           <h2 className={styles.sectionTitle}>⭐ 我的收藏</h2>
-          <div className={styles.favs}>
-            {favGames.map((g) => (
-              <Link key={g.id} to={`/game/${g.id}`} className={styles.favChip}>
-                {g.emoji} {g.name}
-              </Link>
-            ))}
-          </div>
+          {FAVORITE_CATEGORIES.map((cat) => {
+            const list = favGames.filter((g) => favoriteCategory(g.id) === cat)
+            if (list.length === 0) return null
+            return (
+              <div key={cat} className={styles.favGroup}>
+                <span className={styles.favGroupLabel}>
+                  {FAV_CATEGORY_ICON[cat]} {cat}
+                  <span className={styles.favGroupCount}>{list.length}</span>
+                </span>
+                <div className={styles.favs}>
+                  {list.map((g) => (
+                    <Link key={g.id} to={`/game/${g.id}`} className={styles.favChip}>
+                      {g.emoji} {g.name}
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
         </section>
       )}
 

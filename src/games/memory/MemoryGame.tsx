@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GameProps, GameStatus } from '../../lib/types'
 import { GameOverlay } from '../shared/GameOverlay'
 import shared from '../shared/game.module.css'
+import { useSaveGame } from '../shared/saveGame'
 import styles from './Memory.module.css'
 
 const FACES = ['🎮', '🚀', '👾', '🎲', '🏆', '⚡', '🌈', '🍕']
@@ -52,7 +53,25 @@ export default function MemoryGame({ onGameOver }: GameProps) {
     return () => window.clearInterval(id)
   }, [status])
 
+  const { hasSave, resume, reset } = useSaveGame(
+    'memory',
+    status,
+    () => ({ cards, steps, elapsed }),
+    (s) => {
+      // 恢复时把翻开的牌翻回去：一半翻开的对子没法续
+      setCards(s.cards.map((c) => ({ ...c, flipped: false })))
+      setSteps(s.steps)
+      setElapsed(s.elapsed)
+      stepsRef.current = s.steps
+      elapsedRef.current = s.elapsed
+      lockRef.current = false
+      firstPickRef.current = null
+    },
+    () => stepsRef.current,
+  )
+
   const start = useCallback(() => {
+    reset()
     setCards(shuffled())
     setSteps(0)
     setElapsed(0)
@@ -61,7 +80,7 @@ export default function MemoryGame({ onGameOver }: GameProps) {
     lockRef.current = false
     firstPickRef.current = null
     setStatus('running')
-  }, [])
+  }, [reset])
 
   const flip = useCallback(
     (index: number) => {
@@ -167,6 +186,10 @@ export default function MemoryGame({ onGameOver }: GameProps) {
           onStart={start}
           onResume={() => setStatus('running')}
           onRestart={start}
+          hasSave={hasSave}
+          onResumeSave={() => {
+            if (resume()) setStatus('running')
+          }}
           idleHint="点击卡片翻开，找出全部 8 对图案。步数越少得分越高！"
         />
       </div>

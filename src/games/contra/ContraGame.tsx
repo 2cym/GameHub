@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GameProps, GameStatus } from '../../lib/types'
 import { GameOverlay } from '../shared/GameOverlay'
+import { useSaveGame } from '../shared/saveGame'
 import { useGameKeys } from '../shared/useGameKeys'
 import { toast } from '../../stores/toast'
 import shared from '../shared/game.module.css'
@@ -55,7 +56,41 @@ export default function ContraGame({ onGameOver }: GameProps) {
   gameOverRef.current = onGameOver
   const finalScoreRef = useRef(0)
 
+  const { hasSave, resume, reset } = useSaveGame<{
+    state: GameState
+    score: number
+    lives: number
+    stage: number
+  }>(
+    'contra',
+    status,
+    () => {
+      const s = stateRef.current
+      if (!s) return null
+      // particles 只是特效残影，丢掉可以让快照小很多（每 15 秒存一次）
+      return {
+        state: { ...s, particles: [] },
+        score: scoreRef.current,
+        lives: livesRef.current,
+        stage: stageRef.current,
+      }
+    },
+    (s) => {
+      stateRef.current = s.state
+      scoreRef.current = s.score
+      livesRef.current = s.lives
+      stageRef.current = s.stage
+      setScore(s.score)
+      setLives(s.lives)
+      setStage(s.stage)
+      setHudWeapon(s.state.player.weapon)
+      finalScoreRef.current = 0
+    },
+    () => scoreRef.current,
+  )
+
   const startGame = useCallback(() => {
+    reset()
     const s = buildLevel(LEVELS[0], 1, 0, 3)
     stateRef.current = s
     setScore(0)
@@ -67,7 +102,7 @@ export default function ContraGame({ onGameOver }: GameProps) {
     stageRef.current = 1
     finalScoreRef.current = 0
     setStatus('running')
-  }, [])
+  }, [reset])
 
   const togglePause = useCallback(() => {
     setStatus((s) => (s === 'running' ? 'paused' : s === 'paused' ? 'running' : s))
@@ -469,7 +504,13 @@ export default function ContraGame({ onGameOver }: GameProps) {
         </div>
       </div>
 
-      <div className={`${shared.stage} ${styles.stage}`} style={{ maxWidth: `min(${W}px, 100%)`, aspectRatio: `${W} / ${H}` }}>
+      <div
+        className={`${shared.stage} ${styles.stage}`}
+        style={{
+          maxWidth: `min(${W}px, 100%, calc((100vh - 230px) * ${W / H}))`,
+          aspectRatio: `${W} / ${H}`,
+        }}
+      >
         <canvas
           ref={canvasRef}
           width={W * 2}
@@ -483,6 +524,10 @@ export default function ContraGame({ onGameOver }: GameProps) {
           onStart={startGame}
           onResume={() => setStatus('running')}
           onRestart={startGame}
+          hasSave={hasSave}
+          onResumeSave={() => {
+            if (resume()) setStatus('running')
+          }}
           idleTitle="魂斗罗"
           idleHint="← → 移动，↑/空格 跳跃，J/Z 射击。击败 Boss 通关！"
         />
@@ -494,6 +539,7 @@ export default function ContraGame({ onGameOver }: GameProps) {
           className={shared.touchBtn}
           onPointerDown={() => (inputRef.current.left = true)}
           onPointerUp={() => (inputRef.current.left = false)}
+          onPointerCancel={() => (inputRef.current.left = false)}
           onPointerLeave={() => (inputRef.current.left = false)}
         >
           ←
@@ -503,6 +549,7 @@ export default function ContraGame({ onGameOver }: GameProps) {
           className={shared.touchBtn}
           onPointerDown={() => (inputRef.current.right = true)}
           onPointerUp={() => (inputRef.current.right = false)}
+          onPointerCancel={() => (inputRef.current.right = false)}
           onPointerLeave={() => (inputRef.current.right = false)}
         >
           →
@@ -512,6 +559,7 @@ export default function ContraGame({ onGameOver }: GameProps) {
           className={shared.touchBtn}
           onPointerDown={() => (inputRef.current.jump = true)}
           onPointerUp={() => (inputRef.current.jump = false)}
+          onPointerCancel={() => (inputRef.current.jump = false)}
           onPointerLeave={() => (inputRef.current.jump = false)}
         >
           ⤴ 跳
@@ -519,8 +567,10 @@ export default function ContraGame({ onGameOver }: GameProps) {
         <button
           type="button"
           className={shared.touchBtn}
+          aria-label="射击"
           onPointerDown={() => (inputRef.current.fire = true)}
           onPointerUp={() => (inputRef.current.fire = false)}
+          onPointerCancel={() => (inputRef.current.fire = false)}
           onPointerLeave={() => (inputRef.current.fire = false)}
         >
           🔫

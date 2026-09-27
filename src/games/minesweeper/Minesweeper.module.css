@@ -94,7 +94,7 @@
 .modeOn {
   background: var(--primary-soft);
   color: var(--text);
-  box-shadow: inset 0 0 0 1px rgba(124, 92, 255, 0.5);
+  box-shadow: inset 0 0 0 1px var(--primary-inset-strong);
 }
 
 @media (hover: hover) {

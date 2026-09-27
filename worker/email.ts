@@ -13,6 +13,13 @@ export interface MailEnv {
 const RESEND_ENDPOINT = 'https://api.resend.com/emails'
 const ALLOWED_HOSTS = new Set(['api.resend.com'])
 
+/**
+ * 收件人地址的边界校验。调用方的 EMAIL_RE 只挡住空白和裸 @，这里再收紧一层：
+ * 收件人来自请求体、最终会被送进一条出站到第三方的 HTTP 请求，
+ * 在 sendMail 内部校验而不是只靠调用方，任何新调用点都不会漏掉。
+ */
+const STRICT_EMAIL_RE = /^[^\s@()<>\[\],;"':.]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$/
+
 /** Resend 官方测试发件地址，未验证自有域名前只能发给 Resend 账号本人的邮箱 */
 const DEFAULT_FROM = 'GameHub <onboarding@resend.dev>'
 
@@ -40,6 +47,9 @@ export async function sendMail(
 ): Promise<void> {
   if (!env.RESEND_API_KEY) {
     throw new HTTPError(502, '邮件服务未配置，请联系管理员')
+  }
+  if (!STRICT_EMAIL_RE.test(to)) {
+    throw new HTTPError(400, '收件人邮箱格式不正确')
   }
   assertAllowedFetchUrl(RESEND_ENDPOINT)
 

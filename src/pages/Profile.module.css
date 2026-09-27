@@ -20,27 +20,34 @@
 .userCard {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 18px;
   padding: 22px 26px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
   background:
-    radial-gradient(500px 160px at 12% -30%, rgba(124, 92, 255, 0.28), transparent 70%),
+    radial-gradient(500px 160px at 12% -30%, var(--primary-glow-1), transparent 70%),
     var(--surface);
 }
 
+/* 头像本身的尺寸与渐变由 <Avatar /> 内联给出，这里只补发光与不被压缩 */
 .bigAvatar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--primary), var(--accent));
-  font-size: 28px;
-  font-weight: 800;
-  color: #fff;
+  flex-shrink: 0;
   box-shadow: var(--glow-primary);
+}
+
+.userMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.userMeta .btn {
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
 }
 
 .username {
@@ -50,6 +57,94 @@
 .email {
   font-size: 13.5px;
   color: var(--text-dim);
+}
+
+/* 选择器展开时整块落到下一行，避免挤坏头像与名字 */
+.picker {
+  flex-basis: 100%;
+  margin-top: 6px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pickerBody {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.pickerPreview {
+  flex-shrink: 0;
+}
+
+.emojiGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
+  gap: 6px;
+  max-width: 460px;
+  flex: 1;
+}
+
+.emojiOpt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.emojiOpt:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.emojiOn {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+
+.paletteRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.swatch {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.swatch:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.swatchOn {
+  border-color: var(--text);
+  transform: scale(1.12);
+}
+
+.pickerActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .section {
@@ -103,6 +198,37 @@
 .bestLabel {
   font-size: 11.5px;
   color: var(--text-faint);
+}
+
+.favGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.favGroup:last-child {
+  margin-bottom: 0;
+}
+
+.favGroupLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.favGroupCount {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
 }
 
 .favs {

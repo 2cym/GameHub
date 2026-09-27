@@ -3,9 +3,12 @@ import { getCookie, setCookie } from 'hono/cookie'
 import type { MiddlewareHandler } from 'hono'
 import {
   COOKIE_NAME,
+  COOKIE_OPTS,
   hashPassword,
+  isTokenRevoked,
   newUserId,
   randomSalt,
+  recordPasswordChange,
   signToken,
   verifyToken,
 } from './auth'
@@ -19,6 +22,27 @@ export interface Env {
   RESEND_API_KEY?: string
   MAIL_FROM?: string
   ADMIN_EMAIL?: string
+  /** AI 服务地址（OpenAI 兼容 /v1），例如 https://token.sensenova.cn/v1 */
+  AI_BASE_URL?: string
+  /** AI 服务密钥，走 `npx wrangler secret put AI_API_KEY`，不写入本文件 */
+  AI_API_KEY?: string
+  /** Turnstile site key（公开，客户端用）；SECRET 走 wrangler secret put */
+  TURNSTILE_SITE_KEY?: string
+  TURNSTILE_SECRET?: string
+  /** Cloudflare Workers AI 内建绑定（wrangler.jsonc 的 ai binding）；后台切到 cloudflare 时才用 */
+  CYM?: unknown
+  /** 兼容旧的绑定名，改名不必同步改代码 */
+  AI?: unknown
+  /** Workers AI REST 备用通道的账户 ID（公开标识，非凭据），走 wrangler secret put */
+  AI_REST_ACCOUNT_ID?: string
+  /** Workers AI REST 备用通道的 API token，走 `wrangler secret put AI_REST_TOKEN`，不写入本文件。
+   *  两项都缺省时该通道完全惰性，绑定路径仍是唯一来源。 */
+  AI_REST_TOKEN?: string
+}
+
+/** Workers AI 绑定在两个候选名上查找，避免控制台改名后提供方静默失效。 */
+function getWorkersAi(env: Env): unknown {
+  return env.CYM ?? env.AI
 }
 
 interface AuthUser {
@@ -53,12 +77,240 @@ const GAME_IDS = new Set([
   'contra',
 ])
 
+/** 收藏分类。纯展示属性，不参与任何权限或计分逻辑。 */
+const FAV_CATEGORIES = ['常玩', '挑战', '休闲'] as const
+type FavoriteCategory = (typeof FAV_CATEGORIES)[number]
+
+/** 分类同样是从请求体进来的外部输入，必须白名单收敛，拒绝任意字符串落库 */
+function normalizeFavoriteCategory(value: unknown): FavoriteCategory {
+  if (typeof value === 'string' && (FAV_CATEGORIES as readonly string[]).includes(value))
+    return value as FavoriteCategory
+  if (value === undefined || value === null) return '常玩'
+  badRequest('未知的收藏分类')
+}
+
+/** 头像调色板长度。前端 AVATAR_PALETTES 必须同样长；越界下标由前端回落到第 0 项 */
+const AVATAR_COLOR_COUNT = 8
+/** 只允许 emoji 组成：字符白名单，从根上排除 HTML 标签与脚本字符，杜绝存储型 XSS */
+const AVATAR_EMOJI_RE = /^[\p{Extended_Pictographic}\p{Emoji_Component}\u200d\uFE0F\s]+$/u
+const AVATAR_EMOJI_MAX = 8
+
+interface AvatarInfo {
+  avatarEmoji: string
+  avatarColor: string
+}
+
+const DEFAULT_AVATAR: AvatarInfo = { avatarEmoji: '', avatarColor: '0' }
+
+function normalizeAvatarEmoji(value: unknown): string {
+  if (value === undefined || value === null) return ''
+  if (typeof value !== 'string') badRequest('头像表情不合法')
+  const v = value.trim()
+  if (v === '' || [...v].length > AVATAR_EMOJI_MAX || !AVATAR_EMOJI_RE.test(v))
+    badRequest('头像表情不合法')
+  return v
+}
+
+function normalizeAvatarColor(value: unknown): string {
+  if (value === undefined || value === null) return '0'
+  const n = Number(value)
+  if (!Number.isInteger(n) || n < 0 || n >= AVATAR_COLOR_COUNT) badRequest('头像颜色不合法')
+  return String(n)
+}
+
+// ---------- 棋类 AI（双提供方：OpenAI 兼容接口 / Cloudflare Workers AI） ----------
+
+/** 走法候选上限，防止超大请求 */
+const AI_MAX_LEGAL_MOVES = 400
+/** 候选数量：中等取 3，困难取 6 */
+const AI_CANDIDATES: Record<'medium' | 'hard', number> = { medium: 3, hard: 6 }
+/** temperature：困难更低以保证确定性；模型自身的强制值优先 */
+const AI_TEMPERATURE: Record<'medium' | 'hard', number> = { medium: 0.7, hard: 0.4 }
+const AI_GAMES = new Set(['chess', 'gomoku', 'go', 'xiangqi'])
+/** 关闭推理时的 max_tokens：只需吐一个短 JSON 数组 */
+const AI_MAX_TOKENS = 256
+/** 开启推理时的 max_tokens：推理本身会吃掉大量 token，预算不足会把正文截断成空 */
+const AI_MAX_TOKENS_REASONING = 4000
+/** 请求超时：关闭推理只需 1–4 秒，开启推理可能先想几十秒 */
+const AI_TIMEOUT_MS = 30000
+const AI_REASONING_TIMEOUT_MS = 90000
+// Workers AI 没有自己的超时参数，且 70B 冷加载可能很慢；给足余量但不拖到 Workers 请求上限
+const AI_WORKERS_AI_TIMEOUT_MS = 90000
+// REST 备用通道只在绑定返回空正文时才走（那一步本身很快），所以给个更短的窗口，避免两段串行拖过 Workers 请求上限
+const AI_REST_TIMEOUT_MS = 30000
+
+/** 可切换的模型及其元数据。temp 为该模型的强制 temperature（该模型拒绝非 1 的值）。 */
+interface AiModelInfo {
+  id: string
+  label: string
+  desc: string
+  temp?: number
+}
+
+/** OpenAI 兼容接口可选模型；延迟为 2026-09 实测值，仅供后台展示参考 */
+const AI_API_MODELS: AiModelInfo[] = [
+  { id: 'sensenova-6.8-flash-lite', label: 'SenseNova 6.8 Flash Lite', desc: '轻量高效多模态智能体，关推理实测约 1–2.5 秒' },
+  { id: 'deepseek-flash', label: 'DeepSeek V4.1 Flash', desc: '新一代高效通用，关推理实测约 0.9 秒' },
+  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', desc: '高效经济型通用，关推理实测约 1.3 秒' },
+  { id: 'glm-5.2', label: 'GLM-5.2', desc: '智谱旗舰开源，1M 上下文，关推理实测约 1.2 秒' },
+  { id: 'kimi-k3', label: 'Kimi K3', desc: '月之暗面旗舰，仅接受 temperature=1，实测约 4 秒', temp: 1 },
+]
+
+/** Workers AI 可选模型；需先在 Cloudflare 控制台开通 Workers AI */
+/** Workers AI 模型 ID 逐一按官方目录核对（developers.cloudflare.com/workers-ai/models）：
+ *  老版 Llama 3 / 3.1 / 3.3 纯 instruct 均已下架，只剩量化变体。写错 ID 平台会直接报 model not found。 */
+const AI_CF_MODELS: AiModelInfo[] = [
+  { id: '@cf/meta/llama-3.2-3b-instruct', label: 'Llama 3.2 3B Instruct', desc: '3B，响应快、额度消耗最低，适合对局实时性' },
+  { id: '@cf/meta/llama-3.1-8b-instruct-fp8', label: 'Llama 3.1 8B Instruct FP8', desc: '8B 量化版，速度与质量的折中' },
+  { id: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', label: 'Llama 3.3 70B FP8 Fast', desc: '当前最强 70B，质量最好但响应最慢、额度消耗最高' },
+]
+/** 游客额度归属前缀：同一设备 ID 一天共享一个额度 */
+const AI_GUEST_PREFIX = 'guest:'
+/** 设备 ID 格式：客户端 16 字节随机数转十六进制 */
+const DEVICE_ID_RE = /^[a-f0-9]{32}$/
+/** 设备 ID 上限，防超大请求体 */
+const DEVICE_ID_MAX = 64
+/** Turnstile token 上限 */
+const TURNSTILE_TOKEN_MAX = 2048
+/** Turnstile 校验服务地址 */
+const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
+/** 校验超时，避免拖慢 AI 请求 */
+const TURNSTILE_TIMEOUT_MS = 5000
+
+// ---------- AI 运行时设置（site_settings 表，管理后台可调） ----------
+
+const AI_PROVIDERS = ['api', 'cloudflare', 'off'] as const
+type AiProvider = (typeof AI_PROVIDERS)[number]
+
+const SETTING_KEYS = {
+  provider: 'ai_provider',
+  apiModel: 'ai_model',
+  cfModel: 'ai_cf_model',
+  reasoning: 'ai_reasoning',
+} as const
+
+interface AiSettings {
+  provider: AiProvider
+  apiModel: string
+  cfModel: string
+  reasoning: boolean
+}
+
+/** 默认设置。AI 凭据缺失时 /api/ai/move 会自动回落本地 AI，不会影响对局 */
+const DEFAULT_AI_SETTINGS: AiSettings = {
+  provider: 'api',
+  apiModel: 'sensenova-6.8-flash-lite',
+  cfModel: '@cf/meta/llama-3.2-3b-instruct',
+  reasoning: false,
+}
+
+function pickProvider(v: unknown): AiProvider {
+  return v === 'api' || v === 'cloudflare' || v === 'off' ? v : DEFAULT_AI_SETTINGS.provider
+}
+
+function pickModel(list: AiModelInfo[], v: unknown, fallback: string): string {
+  return typeof v === 'string' && list.some((m) => m.id === v) ? v : fallback
+}
+
+/** 该模型的强制 temperature；未声明时用难度默认值 */
+function modelTemperature(id: string, list: AiModelInfo[], fallback: number): number {
+  return list.find((m) => m.id === id)?.temp ?? fallback
+}
+
+/**
+ * 读取设置。任何缺值或非法值都回落到代码默认，保证配置被写坏时 /api/ai/move 依然可用。
+ * 表很小（只有 4 行），整表读取避免 IN(...) 绑定的兼容性问题。
+ */
+async function loadAiSettings(db: D1Database): Promise<AiSettings> {
+  let map: Map<string, string>
+  try {
+    // site_settings 是后加的表：旧库尚未跑过 migrate.sql 时会 SQLITE_ERROR。
+    // 读不到就当「未配置」处理，回落默认值 —— 不能让它把 /api/ai/move 一起搞成 500。
+    const { results } = await db
+      .prepare('SELECT key, value FROM site_settings')
+      .all<{ key: string; value: string }>()
+    map = new Map(results.map((r) => [r.key, r.value]))
+  } catch {
+    return DEFAULT_AI_SETTINGS
+  }
+  return {
+    provider: pickProvider(map.get(SETTING_KEYS.provider)),
+    apiModel: pickModel(AI_API_MODELS, map.get(SETTING_KEYS.apiModel), DEFAULT_AI_SETTINGS.apiModel),
+    cfModel: pickModel(AI_CF_MODELS, map.get(SETTING_KEYS.cfModel), DEFAULT_AI_SETTINGS.cfModel),
+    reasoning: map.get(SETTING_KEYS.reasoning) === 'on',
+  }
+}
+
+/** 探测两个提供方当前是否真的可用，供后台展示灰显状态 */
+function aiCapabilities(env: Env): {
+  api: { configured: boolean; baseUrl: string }
+  cloudflare: { available: boolean }
+} {
+  return {
+    api: {
+      configured: Boolean((env.AI_BASE_URL ?? '').trim() && (env.AI_API_KEY ?? '').trim()),
+      baseUrl: env.AI_BASE_URL ?? '',
+    },
+    cloudflare: { available: typeof (getWorkersAi(env) as { run?: unknown })?.run === 'function' },
+  }
+}
+
+type AiGameName = '国际象棋' | '五子棋' | '围棋' | '中国象棋'
+const AI_GAME_LABEL: Record<string, AiGameName> = {
+  chess: '国际象棋',
+  gomoku: '五子棋',
+  go: '围棋',
+  xiangqi: '中国象棋',
+}
+
+/** 校验游客提交的 Turnstile token；secret 是否配置由调用方判断 */
+async function verifyTurnstile(secret: string, token: string, remoteIp: string): Promise<boolean> {
+  try {
+    const res = await fetch(TURNSTILE_VERIFY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body:
+        `secret=${encodeURIComponent(secret)}` +
+        `&response=${encodeURIComponent(token)}` +
+        `&remoteip=${encodeURIComponent(remoteIp)}`,
+      signal: AbortSignal.timeout(TURNSTILE_TIMEOUT_MS),
+    })
+    const data = (await res.json().catch(() => null)) as { success?: boolean } | null
+    return !!data?.success
+  } catch {
+    return false
+  }
+}
+
 async function loadUser(db: D1Database, id: string): Promise<AuthUser | null> {
   const row = await db
     .prepare('SELECT id, email, username, is_admin, is_banned FROM users WHERE id = ?')
     .bind(id)
     .first<AuthUser>()
   return row ?? null
+}
+
+/** 批量取头像资料。没有资料行的用户不会出现在返回值里，由调用方兜 DEFAULT_AVATAR。
+ *  用 batch 而非 IN(?) 拼接，参数一律走绑定，语句数按 D1 每批 100 条上限分批。 */
+async function fetchProfiles(db: D1Database, userIds: string[]): Promise<Record<string, AvatarInfo>> {
+  const map: Record<string, AvatarInfo> = {}
+  const uniq = [...new Set(userIds)].filter(Boolean)
+  for (let i = 0; i < uniq.length; i += 100) {
+    const slice = uniq.slice(i, i + 100)
+    const results = await db.batch(
+      slice.map(
+        (id) =>
+          db.prepare(
+            'SELECT avatar_emoji AS avatarEmoji, avatar_color AS avatarColor FROM user_profile WHERE user_id = ?',
+          ).bind(id),
+      ),
+    )
+    results.forEach((res, j) => {
+      const rows = res.results as Array<{ avatarEmoji: string; avatarColor: string }> | undefined
+      if (rows && rows.length > 0) map[slice[j]] = { avatarEmoji: rows[0].avatarEmoji, avatarColor: rows[0].avatarColor }
+    })
+  }
+  return map
 }
 
 /** 鉴权中间件：验证 Cookie 中的 JWT，把 user 挂到上下文 */
@@ -69,6 +321,9 @@ const requireAuth: MiddlewareHandler<{ Bindings: Env; Variables: Vars }> = async
   const user = await loadUser(c.env.DB, payload.uid)
   if (!user) throw new HTTPError(401, '登录态已失效，请重新登录')
   if (user.is_banned) throw new HTTPError(403, '账号已被封禁')
+  // 改过密码（自助重置或管理员重置）后，签发更早的令牌立即作废
+  if (await isTokenRevoked(c.env.DB, user.id, payload.iat))
+    throw new HTTPError(401, '登录态已失效，请重新登录')
   c.set('user', user)
   await next()
 }
@@ -85,7 +340,7 @@ export const app = new Hono<{ Bindings: Env; Variables: Vars }>()
 // 统一错误处理（含中间件抛出的 HTTPError）
 app.onError((err, c) => {
   if (err instanceof HTTPError) {
-    return c.json({ error: err.message }, err.status as 400)
+    return c.json({ error: err.message }, err.status)
   }
   console.error('unexpected:', err)
   return c.json({ error: '服务器开小差了，请稍后再试' }, 500)
@@ -158,12 +413,7 @@ app.post('/api/auth/register', async (c) => {
     .run()
 
   const token = await signToken({ uid: id, admin: isAdmin }, c.env.JWT_SECRET)
-  setCookie(c, COOKIE_NAME, token, {
-    httpOnly: true,
-    sameSite: 'Lax',
-    path: '/',
-    maxAge: 60 * 60 * 24 * 30,
-  })
+  setCookie(c, COOKIE_NAME, token, { ...COOKIE_OPTS, maxAge: 60 * 60 * 24 * 30 })
   return c.json({ user: { id, email, username, isAdmin } })
 })
 
@@ -194,12 +444,7 @@ app.post('/api/auth/login', async (c) => {
   }
 
   const token = await signToken({ uid: row.id, admin: row.is_admin }, c.env.JWT_SECRET)
-  setCookie(c, COOKIE_NAME, token, {
-    httpOnly: true,
-    sameSite: 'Lax',
-    path: '/',
-    maxAge: 60 * 60 * 24 * 30,
-  })
+  setCookie(c, COOKIE_NAME, token, { ...COOKIE_OPTS, maxAge: 60 * 60 * 24 * 30 })
   return c.json({ user: { id: row.id, email: row.email, username: row.username, isAdmin: row.is_admin } })
 })
 
@@ -224,16 +469,14 @@ app.post('/api/auth/forgot-password', async (c) => {
   )
     .bind(passwordHash, salt, email)
     .run()
+  // 重置密码后，该用户之前签发的所有令牌立即作废
+  const me = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first<{ id: string }>()
+  if (me) await recordPasswordChange(c.env.DB, me.id)
   return c.json({ ok: true })
 })
 
 app.post('/api/auth/logout', (c) => {
-  setCookie(c, COOKIE_NAME, '', {
-    httpOnly: true,
-    sameSite: 'Lax',
-    path: '/',
-    maxAge: 0,
-  })
+  setCookie(c, COOKIE_NAME, '', { ...COOKIE_OPTS, maxAge: 0 })
   return c.json({ ok: true })
 })
 
@@ -242,7 +485,46 @@ app.get('/api/auth/me', async (c) => {
   const payload = token ? await verifyToken(token, c.env.JWT_SECRET) : null
   if (!payload) return c.json({ user: null })
   const user = await loadUser(c.env.DB, payload.uid)
-  return c.json({ user: user ? { ...user, isAdmin: user.is_admin } : null })
+  if (!user) return c.json({ user: null })
+  // 本接口不走 requireAuth，但同样要认吊销：否则改密码后前端仍会以为用户在线
+  if (await isTokenRevoked(c.env.DB, user.id, payload.iat)) return c.json({ user: null })
+  const profiles = await fetchProfiles(c.env.DB, [user.id])
+  return c.json({
+    user: { ...user, isAdmin: user.is_admin, ...(profiles[user.id] ?? DEFAULT_AVATAR) },
+  })
+})
+
+// ---------- 头像资料 ----------
+
+app.get('/api/me/profile', requireAuth, async (c) => {
+  const user = c.get('user')
+  const profiles = await fetchProfiles(c.env.DB, [user.id])
+  return c.json(profiles[user.id] ?? DEFAULT_AVATAR)
+})
+
+app.patch('/api/me/profile', requireAuth, async (c) => {
+  const body = await c.req.json().catch(() => null)
+  const src = (body ?? {}) as Record<string, unknown>
+  const user = c.get('user')
+  // PATCH 语义：只改请求体里出现的字段，缺省字段保持原值
+  const emoji = 'avatarEmoji' in src ? normalizeAvatarEmoji(src.avatarEmoji) : undefined
+  const color = 'avatarColor' in src ? normalizeAvatarColor(src.avatarColor) : undefined
+  if (emoji === undefined && color === undefined) badRequest('没有可更新的内容')
+
+  const current = (await fetchProfiles(c.env.DB, [user.id]))[user.id] ?? DEFAULT_AVATAR
+  const nextEmoji = emoji ?? current.avatarEmoji
+  const nextColor = color ?? current.avatarColor
+  await c.env.DB.prepare(
+    `INSERT INTO user_profile (user_id, avatar_emoji, avatar_color, updated_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET
+       avatar_emoji = excluded.avatar_emoji,
+       avatar_color = excluded.avatar_color,
+       updated_at = excluded.updated_at`,
+  )
+    .bind(user.id, nextEmoji, nextColor, Math.floor(Date.now() / 1000))
+    .run()
+  return c.json({ ok: true, avatarEmoji: nextEmoji, avatarColor: nextColor })
 })
 
 // ---------- 排行榜（公开） ----------
@@ -251,7 +533,7 @@ app.get('/api/leaderboard/:gameId', async (c) => {
   const gameId = c.req.param('gameId')
   if (!GAME_IDS.has(gameId)) badRequest('未知的游戏')
   const { results } = await c.env.DB.prepare(
-    `SELECT u.username AS username, MAX(s.score) AS score
+    `SELECT u.id AS userId, u.username AS username, MAX(s.score) AS score
      FROM scores s JOIN users u ON u.id = s.user_id
      WHERE s.game_id = ?
      GROUP BY s.user_id
@@ -259,8 +541,12 @@ app.get('/api/leaderboard/:gameId', async (c) => {
      LIMIT 10`,
   )
     .bind(gameId)
-    .all<{ username: string; score: number }>()
-  return c.json({ entries: results ?? [] })
+    .all<{ userId: string; username: string; score: number }>()
+  const entries = results ?? []
+  const profiles = await fetchProfiles(c.env.DB, entries.map((e) => e.userId))
+  return c.json({
+    entries: entries.map((e) => ({ ...e, ...(profiles[e.userId] ?? DEFAULT_AVATAR) })),
+  })
 })
 
 // ---------- 流量统计（公开） ----------
@@ -330,36 +616,152 @@ app.get('/api/me/scores/recent', requireAuth, async (c) => {
   return c.json({ records: results ?? [] })
 })
 
+// 游玩时长上报。客户端定时（约 30s）发送一次增量秒数；
+// 日期由服务端生成，客户端不传时间，无法伪造「哪天玩了多久」。
+app.post('/api/playtime', requireAuth, async (c) => {
+  const body = await c.req.json().catch(() => null)
+  if (!body) badRequest('请求体格式错误')
+  const { gameId, seconds } = (body ?? {}) as Record<string, unknown>
+  if (typeof gameId !== 'string' || !GAME_IDS.has(gameId)) badRequest('未知的游戏')
+  if (typeof seconds !== 'number' || !Number.isInteger(seconds) || seconds <= 0 || seconds > 86400)
+    badRequest('时长不合法')
+
+  const user = c.get('user')
+  const date = new Date().toISOString().slice(0, 10)
+  await c.env.DB.prepare(
+    `INSERT INTO play_session_times (user_id, game_id, date, seconds) VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_id, game_id, date) DO UPDATE SET seconds = seconds + excluded.seconds`,
+  )
+    .bind(user.id, gameId, date, seconds)
+    .run()
+  return c.json({ ok: true, date })
+})
+
+// 个人统计：成绩进步曲线 + 近 30 天时长。
+// scores 表只在破纪录时写入，所以按时间升序排列就是严格的进步曲线。
+app.get('/api/me/stats', requireAuth, async (c) => {
+  const user = c.get('user')
+  const db = c.env.DB
+  const today = new Date().toISOString().slice(0, 10)
+  const windowStart = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10)
+
+  const [scoreRows, timeRows, totals, timeGames, scoreGameRows] = await Promise.all([
+    db.prepare(
+      'SELECT game_id AS gameId, score, created_at AS createdAt FROM scores WHERE user_id = ? ORDER BY created_at ASC, id ASC',
+    ).bind(user.id).all<{ gameId: string; score: number; createdAt: number }>(),
+    db.prepare(
+      'SELECT game_id AS gameId, date, seconds FROM play_session_times WHERE user_id = ? AND date >= ?',
+    ).bind(user.id, windowStart).all<{ gameId: string; date: string; seconds: number }>(),
+    db.prepare(
+      'SELECT COALESCE(SUM(seconds), 0) AS totalSeconds, COUNT(DISTINCT date) AS playDays FROM play_session_times WHERE user_id = ?',
+    ).bind(user.id).first<{ totalSeconds: number; playDays: number }>(),
+    db.prepare(
+      'SELECT COUNT(DISTINCT game_id) AS cnt FROM play_session_times WHERE user_id = ?',
+    ).bind(user.id).first<{ cnt: number }>(),
+    db.prepare(
+      'SELECT DISTINCT game_id AS gameId FROM scores WHERE user_id = ?',
+    ).bind(user.id).all<{ gameId: string }>(),
+  ])
+
+  const progressMap = new Map<string, { t: number; score: number }[]>()
+  for (const row of scoreRows.results ?? []) {
+    const points = progressMap.get(row.gameId) ?? []
+    points.push({ t: row.createdAt, score: row.score })
+    progressMap.set(row.gameId, points)
+  }
+
+  const dayMap = new Map<string, { date: string; total: number; byGame: Record<string, number> }>()
+  for (const row of timeRows.results ?? []) {
+    let day = dayMap.get(row.date)
+    if (!day) {
+      day = { date: row.date, total: 0, byGame: {} }
+      dayMap.set(row.date, day)
+    }
+    day.total += row.seconds
+    day.byGame[row.gameId] = (day.byGame[row.gameId] ?? 0) + row.seconds
+  }
+
+  // 玩过 = 有成绩记录或有时长记录，两个来源取并集
+  const played = new Set<string>((scoreGameRows.results ?? []).map((r) => r.gameId))
+  return c.json({
+    progress: Array.from(progressMap.entries()).map(([gameId, points]) => ({ gameId, points })),
+    dailySeconds: Array.from(dayMap.values()).sort((a, b) => a.date.localeCompare(b.date)),
+    totalSeconds: totals?.totalSeconds ?? 0,
+    playDays: totals?.playDays ?? 0,
+    totalGames: timeGames?.cnt ?? 0,
+    playedGames: played.size,
+    windowStart,
+    today,
+  })
+})
+
 // ---------- 收藏 ----------
 
 app.get('/api/me/favorites', requireAuth, async (c) => {
   const user = c.get('user')
   const { results } = await c.env.DB.prepare(
-    'SELECT game_id AS gameId FROM favorites WHERE user_id = ?',
+    `SELECT f.game_id AS gameId, COALESCE(m.category, '常玩') AS category
+     FROM favorites f
+     LEFT JOIN favorites_meta m ON m.user_id = f.user_id AND m.game_id = f.game_id
+     WHERE f.user_id = ?
+     ORDER BY category, f.game_id`,
   )
     .bind(user.id)
-    .all<{ gameId: string }>()
-  return c.json({ gameIds: (results ?? []).map((r) => r.gameId) })
+    .all<{ gameId: string; category: string }>()
+  const entries = (results ?? []).map((r) => ({
+    gameId: r.gameId,
+    category: r.category as FavoriteCategory,
+  }))
+  // gameIds 保留给老客户端与后台统计，entries 是新 UI 用
+  return c.json({ entries, gameIds: entries.map((e) => e.gameId) })
 })
 
 app.post('/api/me/favorites', requireAuth, async (c) => {
   const body = await c.req.json().catch(() => null)
-  const { gameId } = (body ?? {}) as Record<string, unknown>
+  const { gameId, category } = (body ?? {}) as Record<string, unknown>
   if (typeof gameId !== 'string' || !GAME_IDS.has(gameId))
     badRequest('未知的游戏')
+  const cat = normalizeFavoriteCategory(category)
   const user = c.get('user')
-  await c.env.DB.prepare(
-    'INSERT OR IGNORE INTO favorites (user_id, game_id) VALUES (?, ?)',
+  // 两张表一起提交：单条语句无法跨表，批处理保证不会出现「收藏了但没分类」的半写状态
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      'INSERT OR IGNORE INTO favorites (user_id, game_id) VALUES (?, ?)',
+    ).bind(user.id, gameId),
+    c.env.DB.prepare(
+      `INSERT INTO favorites_meta (user_id, game_id, category) VALUES (?, ?, ?)
+       ON CONFLICT(user_id, game_id) DO UPDATE SET category = excluded.category`,
+    ).bind(user.id, gameId, cat),
+  ])
+  return c.json({ ok: true, gameId, category: cat })
+})
+
+app.patch('/api/me/favorites/:gameId', requireAuth, async (c) => {
+  const gameId = c.req.param('gameId')
+  if (!GAME_IDS.has(gameId)) badRequest('未知的游戏')
+  const body = await c.req.json().catch(() => null)
+  const cat = normalizeFavoriteCategory(((body ?? {}) as Record<string, unknown>).category)
+  const user = c.get('user')
+  const exists = await c.env.DB.prepare(
+    'SELECT 1 AS ok FROM favorites WHERE user_id = ? AND game_id = ?',
   )
     .bind(user.id, gameId)
-    .run()
-  return c.json({ ok: true })
+    .first<{ ok: number }>()
+  if (!exists) badRequest('还没有收藏这个游戏')
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `INSERT INTO favorites_meta (user_id, game_id, category) VALUES (?, ?, ?)
+       ON CONFLICT(user_id, game_id) DO UPDATE SET category = excluded.category`,
+    ).bind(user.id, gameId, cat),
+  ])
+  return c.json({ ok: true, gameId, category: cat })
 })
 
 app.delete('/api/me/favorites/:gameId', requireAuth, async (c) => {
   const gameId = c.req.param('gameId')
   if (!GAME_IDS.has(gameId)) badRequest('未知的游戏')
   const user = c.get('user')
+  // 分类行靠 ON DELETE CASCADE 跟着收藏一起删，不手动清理
   await c.env.DB.prepare(
     'DELETE FROM favorites WHERE user_id = ? AND game_id = ?',
   )
@@ -399,7 +801,8 @@ app.get('/api/admin/stats', requireAuth, requireAdmin, async (c) => {
 
 app.get('/api/admin/users', requireAuth, requireAdmin, async (c) => {
   const search = c.req.query('search') ?? ''
-  const limit = Math.min(Number(c.req.query('limit')) || 20, 100)
+  // SQLite 中 LIMIT -1 等于「不限」，必须夹住下界，否则负值可一次拉全表
+  const limit = Math.max(1, Math.min(Number(c.req.query('limit')) || 20, 100))
   const offset = Math.max(Number(c.req.query('offset')) || 0, 0)
   const db = c.env.DB
   let where = '1=1'
@@ -421,7 +824,12 @@ app.get('/api/admin/users', requireAuth, requireAdmin, async (c) => {
     id: string; email: string; username: string; isAdmin: boolean; isBanned: boolean
     createdAt: number; scoreCount: number; favCount: number
   }>()
-  return c.json({ users: results ?? [], total: countRow?.cnt ?? 0 })
+  const users = results ?? []
+  const profiles = await fetchProfiles(db, users.map((u) => u.id))
+  return c.json({
+    users: users.map((u) => ({ ...u, ...(profiles[u.id] ?? DEFAULT_AVATAR) })),
+    total: countRow?.cnt ?? 0,
+  })
 })
 
 app.get('/api/admin/users/:id', requireAuth, requireAdmin, async (c) => {
@@ -434,13 +842,21 @@ app.get('/api/admin/users/:id', requireAuth, requireAdmin, async (c) => {
     id: string; email: string; username: string; isAdmin: boolean; isBanned: boolean; createdAt: number
   }>()
   if (!row) badRequest('用户不存在')
-  const { results: bests } = await db.prepare(
-    'SELECT game_id AS gameId, MAX(score) AS best FROM scores WHERE user_id = ? GROUP BY game_id ORDER BY best DESC',
-  ).bind(id).all<{ gameId: string; best: number }>()
-  const { results: favs } = await db.prepare(
-    'SELECT game_id AS gameId FROM favorites WHERE user_id = ?',
-  ).bind(id).all<{ gameId: string }>()
-  return c.json({ ...row, bests: bests ?? [], favorites: (favs ?? []).map(f => f.gameId) })
+  const [profile, bestsRes, favsRes] = await Promise.all([
+    fetchProfiles(db, [id]),
+    db.prepare(
+      'SELECT game_id AS gameId, MAX(score) AS best FROM scores WHERE user_id = ? GROUP BY game_id ORDER BY best DESC',
+    ).bind(id).all<{ gameId: string; best: number }>(),
+    db.prepare('SELECT game_id AS gameId FROM favorites WHERE user_id = ?')
+      .bind(id)
+      .all<{ gameId: string }>(),
+  ])
+  return c.json({
+    ...row,
+    ...(profile[id] ?? DEFAULT_AVATAR),
+    bests: bestsRes.results ?? [],
+    favorites: (favsRes.results ?? []).map((f) => f.gameId),
+  })
 })
 
 app.post('/api/admin/users/:id/ban', requireAuth, requireAdmin, async (c) => {
@@ -483,6 +899,9 @@ app.post('/api/admin/users/:id/password', requireAuth, requireAdmin, async (c) =
   const passwordHash = await hashPassword(newPassword, salt)
   await c.env.DB.prepare('UPDATE users SET password_hash = ?, salt = ? WHERE id = ?')
     .bind(passwordHash, salt, id).run()
+  // 同时作废该用户的全部旧令牌。若管理员重置的是自己的密码，本次会话也会随之失效，
+  // 前端会按 401 走重新登录流程——这是预期行为，不做例外。
+  await recordPasswordChange(c.env.DB, id)
   return c.json({ ok: true })
 })
 
@@ -504,12 +923,22 @@ app.get('/api/admin/debug', requireAuth, requireAdmin, async (c) => {
     await c.env.DB.prepare('SELECT 1').first()
     dbOk = true
   } catch { /* db unavailable */ }
+  const settings = await loadAiSettings(c.env.DB)
+  const caps = aiCapabilities(c.env)
   return c.json({
     db: dbOk ? 'connected' : 'disconnected',
     jwtSecret: Boolean(c.env.JWT_SECRET) ? 'configured' : 'MISSING',
     resendKey: Boolean(c.env.RESEND_API_KEY) ? 'configured' : 'NOT_SET',
-    adminEmail: c.env.ADMIN_EMAIL ?? 'NOT_SET',
+    // 只回配置状态，不回邮箱地址本身——这是个人身份信息，不该出现在 API 响应里
+    adminEmail: c.env.ADMIN_EMAIL ? 'configured' : 'NOT_SET',
     mailFrom: c.env.MAIL_FROM ?? 'default',
+    aiProvider: caps.api.configured ? 'configured' : 'NOT_CONFIGURED',
+    turnstile:
+      c.env.TURNSTILE_SECRET && c.env.TURNSTILE_SITE_KEY ? 'configured' : 'NOT_CONFIGURED',
+    aiProviderSetting: settings.provider,
+    aiModel: settings.provider === 'cloudflare' ? settings.cfModel : settings.apiModel,
+    aiReasoning: settings.reasoning ? 'on' : 'off',
+    aiWorkersAiAvailable: caps.cloudflare.available,
     workerVersion: process.env.WORKER_VERSION ?? 'unknown',
   })
 })
@@ -546,6 +975,926 @@ app.get('/api/admin/analytics', requireAuth, requireAdmin, async (c) => {
     pathDistribution: pathDist ?? [],
     hourlyTraffic: hourly ?? [],
   })
+})
+
+// ---------- 留言板（公开写入，管理员删除） ----------
+
+app.post('/api/messages', async (c) => {
+  const body = await c.req.json().catch(() => null)
+  if (!body) badRequest('请求体格式错误')
+  const { username, content } = (body ?? {}) as Record<string, unknown>
+  if (typeof username !== 'string' || username.length < 1 || username.length > 20)
+    badRequest('昵称需 1-20 字符')
+  if (typeof content !== 'string' || content.length < 1 || content.length > 500)
+    badRequest('留言需 1-500 字')
+  await c.env.DB.prepare(
+    'INSERT INTO messages (user_id, username, content) VALUES (?, ?, ?)',
+  ).bind('anonymous', username, content).run()
+  return c.json({ ok: true })
+})
+
+// 公开留言列表（任何人可看，首页用）
+app.get('/api/messages/public', async (c) => {
+  const limit = Math.max(1, Math.min(Number(c.req.query('limit')) || 20, 50))
+  const { results } = await c.env.DB.prepare(
+    'SELECT id, username, content, created_at AS createdAt FROM messages ORDER BY created_at DESC LIMIT ?',
+  ).bind(limit).all<{ id: number; username: string; content: string; createdAt: number }>()
+  return c.json({ messages: results ?? [] })
+})
+
+app.get('/api/messages', requireAuth, requireAdmin, async (c) => {
+  const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 200)
+  const offset = Math.max(Number(c.req.query('offset')) || 0, 0)
+  // total 要走 COUNT(*)：SELECT 语句的 meta 里没有 changes 字段，读它永远是 0
+  const [{ results }, count] = await Promise.all([
+    c.env.DB.prepare(
+      'SELECT id, username, content, created_at AS createdAt FROM messages ORDER BY created_at DESC LIMIT ? OFFSET ?',
+    ).bind(limit, offset).all<{ id: number; username: string; content: string; createdAt: number }>(),
+    c.env.DB.prepare('SELECT COUNT(*) AS total FROM messages').first<{ total: number }>(),
+  ])
+  return c.json({ messages: results ?? [], total: count?.total ?? 0 })
+})
+
+app.delete('/api/messages/:id', requireAuth, requireAdmin, async (c) => {
+  const id = Number(c.req.param('id'))
+  if (!Number.isInteger(id) || id <= 0) badRequest('无效消息 ID')
+  await c.env.DB.prepare('DELETE FROM messages WHERE id = ?').bind(id).run()
+  return c.json({ ok: true })
+})
+
+// ---------- 好友系统 ----------
+
+app.get('/api/friends', requireAuth, async (c) => {
+  const user = c.get('user')
+  const { results } = await c.env.DB.prepare(
+    `SELECT u.id, u.username, u.email, u.is_admin AS isAdmin, u.is_banned AS isBanned
+     FROM friendships f JOIN users u ON u.id = f.friend_id
+     WHERE f.user_id = ? ORDER BY u.username`,
+  ).bind(user.id).all<{ id: string; username: string; email: string; isAdmin: boolean; isBanned: boolean }>()
+  const friends = results ?? []
+  const profiles = await fetchProfiles(c.env.DB, friends.map((f) => f.id))
+  return c.json({ friends: friends.map((f) => ({ ...f, ...(profiles[f.id] ?? DEFAULT_AVATAR) })) })
+})
+
+app.get('/api/friends/search', requireAuth, async (c) => {
+  const user = c.get('user')
+  const q = (c.req.query('q') ?? '').trim()
+  if (q.length < 1) return c.json({ users: [] })
+  const { results } = await c.env.DB.prepare(
+    `SELECT u.id, u.username, u.is_banned AS isBanned
+     FROM users u
+     WHERE u.id != ? AND (u.username LIKE ? OR u.email LIKE ?)
+     AND u.id NOT IN (SELECT friend_id FROM friendships WHERE user_id = ?)
+     ORDER BY u.username LIMIT 20`,
+  ).bind(user.id, `%${q}%`, `%${q}%`, user.id).all<{ id: string; username: string; isBanned: boolean }>()
+  const users = results ?? []
+  const profiles = await fetchProfiles(c.env.DB, users.map((u) => u.id))
+  return c.json({ users: users.map((u) => ({ ...u, ...(profiles[u.id] ?? DEFAULT_AVATAR) })) })
+})
+
+app.post('/api/friends/:userId', requireAuth, async (c) => {
+  const user = c.get('user')
+  const targetId = c.req.param('userId')
+  if (targetId === user.id) badRequest('不能添加自己为好友')
+  const target = await c.env.DB.prepare('SELECT id, username FROM users WHERE id = ?').bind(targetId).first()
+  if (!target) badRequest('用户不存在')
+  await c.env.DB.prepare(
+    'INSERT OR IGNORE INTO friendships (user_id, friend_id) VALUES (?, ?)',
+  ).bind(user.id, targetId).run()
+  await c.env.DB.prepare(
+    'INSERT OR IGNORE INTO friendships (user_id, friend_id) VALUES (?, ?)',
+  ).bind(targetId, user.id).run()
+  return c.json({ ok: true })
+})
+
+app.delete('/api/friends/:userId', requireAuth, async (c) => {
+  const user = c.get('user')
+  const targetId = c.req.param('userId')
+  await c.env.DB.prepare(
+    'DELETE FROM friendships WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)',
+  ).bind(user.id, targetId, targetId, user.id).run()
+  return c.json({ ok: true })
+})
+
+// ---------- 好友对局 ----------
+
+const ROOM_GAME_IDS = new Set(['xiangqi', 'chess', 'gomoku', 'go'])
+
+app.post('/api/rooms', requireAuth, async (c) => {
+  const user = c.get('user')
+  const body = await c.req.json().catch(() => null)
+  if (!body) badRequest('请求体格式错误')
+  const { gameId, preferredColor } = (body ?? {}) as Record<string, unknown>
+  if (typeof gameId !== 'string' || !ROOM_GAME_IDS.has(gameId)) badRequest('不支持的对局游戏')
+  const roomId = 'rm_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+  const color = (typeof preferredColor === 'string' && (preferredColor === 'r' || preferredColor === 'b'))
+    ? preferredColor : 'r'
+  await c.env.DB.prepare(
+    `INSERT INTO game_rooms (id, game_id, host_id, host_color, player_color, board_state, current_turn, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting')`,
+  ).bind(roomId, gameId, user.id, color, color === 'r' ? 'b' : 'r', '[]', color).run()
+  return c.json({ roomId })
+})
+
+app.get('/api/rooms', requireAuth, async (c) => {
+  const user = c.get('user')
+  const { results } = await c.env.DB.prepare(
+    `SELECT r.id, r.game_id, r.host_id, r.player_id, r.host_color, r.player_color,
+            r.status, r.created_at AS createdAt,
+            u.username AS hostName
+     FROM game_rooms r LEFT JOIN users u ON u.id = r.host_id
+     WHERE r.host_id = ? OR r.player_id = ?
+     ORDER BY r.created_at DESC LIMIT 20`,
+  ).bind(user.id, user.id).all<{
+    id: string; game_id: string; host_id: string; player_id: string | null
+    host_color: string; player_color: string; status: string; createdAt: number; hostName: string | null
+  }>()
+  const rooms = results ?? []
+  const profiles = await fetchProfiles(
+    c.env.DB,
+    rooms.flatMap((r) => [r.host_id, r.player_id]).filter((v): v is string => !!v),
+  )
+  return c.json({
+    rooms: rooms.map((r) => ({
+      ...r,
+      hostAvatar: profiles[r.host_id] ?? DEFAULT_AVATAR,
+      playerAvatar: r.player_id ? profiles[r.player_id] ?? DEFAULT_AVATAR : undefined,
+    })),
+  })
+})
+
+app.get('/api/rooms/:id', requireAuth, async (c) => {
+  const user = c.get('user')
+  const roomId = c.req.param('id')
+  const row = await c.env.DB.prepare(
+    `SELECT r.id, r.game_id, r.host_id, r.player_id, r.host_color, r.player_color,
+            r.board_state, r.current_turn, r.last_move, r.status, r.moves_count,
+            r.created_at AS createdAt, r.updated_at AS updatedAt,
+            u1.username AS hostName, u2.username AS playerName
+     FROM game_rooms r
+     LEFT JOIN users u1 ON u1.id = r.host_id
+     LEFT JOIN users u2 ON u2.id = r.player_id
+     WHERE r.id = ?`,
+  ).bind(roomId).first<{
+    id: string; game_id: string; host_id: string; player_id: string | null
+    host_color: string; player_color: string; board_state: string; current_turn: string
+    last_move: string | null; status: string; moves_count: number
+    createdAt: number; updatedAt: number; hostName: string | null; playerName: string | null
+  }>()
+  if (!row) badRequest('对局不存在')
+  if (row.host_id !== user.id && row.player_id !== user.id)
+    throw new HTTPError(403, '无权查看此对局')
+  const profiles = await fetchProfiles(
+    c.env.DB,
+    [row.host_id, row.player_id].filter((v): v is string => !!v),
+  )
+  return c.json({
+    ...row,
+    hostAvatar: profiles[row.host_id] ?? DEFAULT_AVATAR,
+    playerAvatar: row.player_id ? profiles[row.player_id] ?? DEFAULT_AVATAR : undefined,
+  })
+})
+
+app.post('/api/rooms/:id/join', requireAuth, async (c) => {
+  const user = c.get('user')
+  const roomId = c.req.param('id')
+  const room = await c.env.DB.prepare(
+    'SELECT id, host_id, player_id, host_color, player_color, status FROM game_rooms WHERE id = ?',
+  ).bind(roomId).first()
+  if (!room) badRequest('对局不存在')
+  if (room.status !== 'waiting') badRequest('对局已开始')
+  if (room.host_id === user.id) badRequest('你是房主，无需加入')
+  await c.env.DB.prepare(
+    'UPDATE game_rooms SET player_id = ?, status = ?, updated_at = ? WHERE id = ?',
+  ).bind(user.id, 'playing', Math.floor(Date.now() / 1000), roomId).run()
+  return c.json({ ok: true })
+})
+
+app.post('/api/rooms/:id/move', requireAuth, async (c) => {
+  const user = c.get('user')
+  const roomId = c.req.param('id')
+  const body = await c.req.json().catch(() => null)
+  if (!body) badRequest('请求体格式错误')
+  const { move } = body as Record<string, unknown>
+  if (typeof move !== 'object' || move === null) badRequest('无效走法')
+
+  const room = await c.env.DB.prepare(
+    'SELECT id, host_id, player_id, host_color, player_color, current_turn, status, moves_count, board_state FROM game_rooms WHERE id = ?',
+  ).bind(roomId).first()
+  if (!room) badRequest('对局不存在')
+  if (room.status === 'finished') badRequest('对局已结束')
+  if (room.status === 'waiting') badRequest('对局尚未开始，等待对手加入')
+
+  const userColor = room.host_id === user.id ? room.host_color : room.player_color
+  if (room.current_turn !== userColor) throw new HTTPError(400, '还没轮到你')
+
+  const newMoves = (Number(room.moves_count) || 0) + 1
+  const now = Math.floor(Date.now() / 1000)
+  const nextTurn = userColor === 'r' ? 'b' : 'r'
+
+  await c.env.DB.prepare(
+    `UPDATE game_rooms SET current_turn = ?, moves_count = ?, last_move = ?, updated_at = ? WHERE id = ?`,
+  ).bind(nextTurn, newMoves, JSON.stringify(move), now, roomId).run()
+
+  return c.json({ ok: true, currentTurn: nextTurn, movesCount: newMoves })
+})
+
+app.post('/api/rooms/:id/resign', requireAuth, async (c) => {
+  const user = c.get('user')
+  const roomId = c.req.param('id')
+  // created_at 必须一起取出来，否则下面算 duration 时是 NaN
+  const room = await c.env.DB.prepare(
+    'SELECT id, host_id, player_id, status, game_id, created_at FROM game_rooms WHERE id = ?',
+  ).bind(roomId).first()
+  if (!room) badRequest('对局不存在')
+  if (room.status !== 'playing') badRequest('对局不在进行中')
+  if (room.host_id !== user.id && room.player_id !== user.id)
+    throw new HTTPError(403, '非对局参与者')
+
+  const winnerId = room.host_id === user.id ? room.player_id : room.host_id
+  const now = Math.floor(Date.now() / 1000)
+  await c.env.DB.prepare(
+    'UPDATE game_rooms SET status = ?, updated_at = ? WHERE id = ?',
+  ).bind('finished', now, roomId).run()
+  await c.env.DB.prepare(
+    `INSERT INTO game_histories (room_id, game_id, player_id, opponent_id, winner, moves, duration)
+     VALUES (?, ?, ?, ?, ?, 0, ?)`,
+  ).bind(roomId, room.game_id, user.id, winnerId!, 'resign', now - Math.floor(Number(room.created_at))).run()
+
+  return c.json({ ok: true, winner: winnerId })
+})
+
+app.delete('/api/rooms/:id', requireAuth, async (c) => {
+  const user = c.get('user')
+  const roomId = c.req.param('id')
+  const room = await c.env.DB.prepare(
+    'SELECT id, host_id, player_id, status, game_id, created_at FROM game_rooms WHERE id = ?',
+  ).bind(roomId).first()
+  if (!room) badRequest('对局不存在')
+  if (room.host_id !== user.id && room.player_id !== user.id)
+    throw new HTTPError(403, '非对局参与者')
+  if (room.status === 'waiting') {
+    await c.env.DB.prepare('DELETE FROM game_rooms WHERE id = ?').bind(roomId).run()
+  } else if (room.status === 'playing') {
+    const winnerId = room.host_id === user.id ? room.player_id : room.host_id
+    const now = Math.floor(Date.now() / 1000)
+    await c.env.DB.prepare('UPDATE game_rooms SET status = ?, updated_at = ? WHERE id = ?').bind('finished', now, roomId).run()
+    await c.env.DB.prepare(
+      `INSERT INTO game_histories (room_id, game_id, player_id, opponent_id, winner, moves, duration)
+       VALUES (?, ?, ?, ?, ?, 0, ?)`,
+    ).bind(roomId, room.game_id, user.id, winnerId!, 'leave', now - Math.floor(Number(room.created_at))).run()
+  }
+  return c.json({ ok: true })
+})
+
+app.get('/api/friends/match-history', requireAuth, async (c) => {
+  const user = c.get('user')
+  const { results } = await c.env.DB.prepare(
+    `SELECT game_id, opponent_id, winner, moves, duration, created_at AS createdAt,
+            u.username AS opponentName
+     FROM game_histories gh JOIN users u ON u.id = gh.opponent_id
+     WHERE gh.player_id = ? ORDER BY created_at DESC LIMIT 50`,
+  ).bind(user.id).all<{
+    game_id: string; opponent_id: string; winner: string | null; moves: number
+    duration: number; createdAt: number; opponentName: string | null
+  }>()
+  const history = results ?? []
+  const profiles = await fetchProfiles(c.env.DB, history.map((h) => h.opponent_id))
+  return c.json({
+    history: history.map((h) => ({ ...h, opponentAvatar: profiles[h.opponent_id] ?? DEFAULT_AVATAR })),
+  })
+})
+
+// ---------- 棋类 AI 走法建议 ----------
+
+/** 从 LLM 原始输出里抽出候选走法字符串数组（容忍 ```json 围栏与前后杂文） */
+function parseAiCandidates(raw: string, legal: Set<string>, want: number): string[] {
+  let text = raw.trim()
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/)
+  if (fence) text = fence[1].trim()
+  const start = text.indexOf('[')
+  const end = text.lastIndexOf(']')
+  if (start === -1 || end === -1 || end <= start) return []
+  try {
+    const arr = JSON.parse(text.slice(start, end + 1))
+    if (!Array.isArray(arr)) return []
+    const out: string[] = []
+    for (const v of arr) {
+      if (typeof v !== 'string') continue
+      const t = v.trim()
+      if (!legal.has(t) || out.includes(t)) continue
+      out.push(t)
+      if (out.length >= want) break
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+/** 生成候选走法的提示词：约束模型只能从合法清单里原样挑选 */
+function buildAiPrompt(game: string, legal: string[], want: number): string {
+  return (
+    `你是${AI_GAME_LABEL[game]}特级大师引擎。下面是当前局面的全部合法走法，请选出最值得考虑的 ${want} 步，` +
+    `按优劣排序，最优选在前。\n\n` +
+    `合法走法清单（只能从这里原样挑选，不得新增、不得改写）：\n${legal.join('\n')}\n\n` +
+    `要求：只输出一个 JSON 数组，元素为走法字符串，数量 ${want}，无多余文字。例如 ["e2e4"]`
+  )
+}
+
+/**
+ * 构造 chat/completions 请求体。
+ *
+ * 各网关关闭推理的参数名不统一：sensenova/deepseek/glm 认 reasoning_effort，kimi 认 thinking，
+ * 所以关闭时两个都下发（未识别的会被忽略）。开启时只下发 thinking——实测 reasoning_effort:'high'
+ * 会把 sensenova flash-lite 的全部 3000 token 预算烧在推理上、正文返回为空。
+ */
+function buildChatBody(
+  model: string,
+  temperature: number,
+  reasoning: boolean,
+  prompt: string,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model,
+    temperature,
+    max_tokens: reasoning ? AI_MAX_TOKENS_REASONING : AI_MAX_TOKENS,
+    messages: [{ role: 'user', content: prompt }],
+  }
+  if (reasoning) {
+    body.thinking = { type: 'enabled' }
+  } else {
+    body.reasoning_effort = 'none'
+    body.thinking = { type: 'disabled' }
+  }
+  return body
+}
+
+/** 调用 OpenAI 兼容 chat/completions。返回模型正文；HTTP 非 2xx 或空正文返回 null。 */
+async function askApiModel(
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+  prompt: string,
+  temperature: number,
+  reasoning: boolean,
+): Promise<string | null> {
+  const url = baseUrl.replace(/\/+$/, '') + '/chat/completions'
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(buildChatBody(model, temperature, reasoning, prompt)),
+    signal: AbortSignal.timeout(reasoning ? AI_REASONING_TIMEOUT_MS : AI_TIMEOUT_MS),
+  })
+  const data = (await res.json().catch(() => null)) as
+    | { choices?: Array<{ message?: { content?: unknown } }>; error?: unknown }
+    | null
+  if (!res.ok) {
+    console.warn(`ai http ${res.status}:`, JSON.stringify(data?.error ?? data).slice(0, 300))
+    return null
+  }
+  const content = data?.choices?.[0]?.message?.content
+  return typeof content === 'string' ? content : null
+}
+
+interface WorkersAiBinding {
+  run: (model: string, data: unknown, options?: Record<string, unknown>) => Promise<unknown>
+}
+
+/** 调用超时。Workers AI 的 run() 不支持 signal 参数——第三个参数只能是配置对象
+ *  （官方文档示例 { queueRequest: true } / { stream: true }），传 AbortSignal 会让它
+ *  把请求当成 options 解析并返回非 Response 对象，表现为 "res.json is not a function"。
+ *  所以超时只能在外面用 Promise.race 兜。 */
+async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: number | undefined
+  const fail = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} 超时（${ms}ms）`)), ms)
+  })
+  try {
+    return await Promise.race([p, fail])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+/** Workers AI 调用结果。text 为 null 表示拿到了响应但里面没有可用正文；
+ *  shape 记录响应实际携带的顶层字段名，便于在后台向用户报告真实结构而不是只说「空」。 */
+interface AiResult {
+  text: string | null
+  shape: string
+  error?: string
+}
+
+/** 从 Workers AI / OpenAI 兼容响应里按优先级取第一个可用正文。
+ *  Workers AI 文本生成返回 { response: "..." }（纯字符串字段，不是 content 数组）；
+ *  OpenAI 兼容接口返回 { choices:[{message:{content}}] }，两者都接以免以后切提供方再踩一次。 */
+function extractAiText(data: unknown): AiResult {
+  const obj = (data ?? null) as {
+    response?: unknown
+    content?: Array<{ text?: unknown }>
+    choices?: Array<{ message?: { content?: unknown } }>
+    error?: unknown
+  } | null
+  const shape = obj === null ? 'null' : 'keys=' + Object.keys(obj).join(',')
+  const error = typeof obj?.error === 'string' ? obj.error : undefined
+  const text = [obj?.response, obj?.content?.[0]?.text, obj?.choices?.[0]?.message?.content]
+    .find((v): v is string => typeof v === 'string' && v.trim().length > 0)
+  return { text: text ?? null, shape, error }
+}
+
+/** 调用 Workers AI 内建绑定。未开通 Workers AI 时 run 不存在，返回 binding-missing 由上层回落本地。
+ *  超时 / 额度超限 / 模型已下架等情况会抛异常，由调用方决定是回落还是上报。 */
+async function askWorkersAi(
+  ai: unknown,
+  model: string,
+  prompt: string,
+  temperature: number,
+): Promise<AiResult> {
+  const runner = (ai ?? {}) as Partial<WorkersAiBinding>
+  if (typeof runner.run !== 'function') return { text: null, shape: 'binding-missing' }
+  const res = await withTimeout(
+    runner.run(model, {
+      messages: [{ role: 'user', content: prompt }],
+      temperature,
+      max_tokens: AI_MAX_TOKENS,
+    }),
+    AI_WORKERS_AI_TIMEOUT_MS,
+    'Workers AI',
+  )
+  // run() 在流式 / batch 模式下可能直接返回已解析的对象而不是 Response，两种都接
+  return extractAiText(
+    typeof (res as { json?: unknown }).json === 'function'
+      ? await (res as { json(): Promise<unknown> }).json()
+      : res,
+  )
+}
+
+/** Workers AI REST 备用通道（/client/v4/accounts/{accountId}/ai/run/{model}）。
+ *  仅在配置了 AI_REST_ACCOUNT_ID + AI_REST_TOKEN 两个密钥时启用，作为绑定路径返回空正文时的兜底。 */
+async function askWorkersAiRest(
+  accountId: string,
+  token: string,
+  model: string,
+  prompt: string,
+  temperature: number,
+): Promise<string | null> {
+  const url = new URL(
+    `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${encodeURIComponent(model)}`,
+  )
+  // accountId 来自配置，但仍在发请求前校验 host，防止拼出意外地址
+  if (url.hostname !== 'api.cloudflare.com') return null
+  const res = await withTimeout(
+    fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: prompt }],
+        temperature,
+        max_tokens: AI_MAX_TOKENS,
+      }),
+    }),
+    AI_REST_TIMEOUT_MS,
+    'Workers AI REST',
+  )
+  if (!res.ok) return null
+  const data = (await res.json()) as { result?: { response?: unknown } } | null
+  const text = data?.result?.response
+  return typeof text === 'string' && text.trim().length > 0 ? text : null
+}
+
+/** 依次尝试内建绑定与 REST 备用通道，返回第一个可用正文。
+ *  绑定路径抛异常（超时 / 额度）时直接向上抛，由调用方回落本地 AI，不在此吞掉。 */
+async function askWorkersAiWithFallback(
+  env: Env,
+  model: string,
+  prompt: string,
+  temperature: number,
+): Promise<AiResult> {
+  const res = await askWorkersAi(getWorkersAi(env), model, prompt, temperature)
+  if (res.text !== null) return res
+  const accountId = (env.AI_REST_ACCOUNT_ID ?? '').trim()
+  const token = (env.AI_REST_TOKEN ?? '').trim()
+  if (!accountId || !token) return res
+  const viaRest = await askWorkersAiRest(accountId, token, model, prompt, temperature)
+  return viaRest === null ? res : { text: viaRest, shape: 'rest-response' }
+}
+
+/** 公开站点配置：客户端据此决定是否渲染 Turnstile */
+app.get('/api/config', async (c) => {
+  return c.json({ turnstileSiteKey: c.env.TURNSTILE_SITE_KEY || null })
+})
+
+/**
+ * AI 候选走法。无需登录：登录账号凭 Cookie 放行，游客凭 deviceId + Turnstile 放行，无步数上限。
+ * 任何异常都返回 engine:'local'，由客户端回落本地 AI，保证对局永不卡住。
+ */
+app.post('/api/ai/move', async (c) => {
+  const body = await c.req.json().catch(() => null)
+  if (!body) badRequest('请求体格式错误')
+  const { game, level, legalMoves, side, deviceId, turnstileToken } = body as Record<string, unknown>
+
+  if (typeof game !== 'string' || !AI_GAMES.has(game)) badRequest('无效棋种')
+  if (level !== 'medium' && level !== 'hard') badRequest('仅支持 medium / hard')
+  if (!Array.isArray(legalMoves) || legalMoves.length === 0) badRequest('没有可用走法')
+  if (legalMoves.length > AI_MAX_LEGAL_MOVES) badRequest('走法数量过多')
+  const legal = legalMoves.filter((v): v is string => typeof v === 'string')
+  if (legal.length === 0) badRequest('没有可用走法')
+  if (typeof side !== 'string' || side.length > 8) badRequest('无效走方')
+
+  // 身份：有效登录态优先；否则接受格式合法的设备 ID 作为游客身份
+  const authCookie = getCookie(c, COOKIE_NAME)
+  const payload = authCookie ? await verifyToken(authCookie, c.env.JWT_SECRET) : null
+  let account: AuthUser | null = null
+  if (payload) {
+    // 令牌被吊销（改过密码）时降级为游客，不能继续拿旧令牌的身份走
+    if (!(await isTokenRevoked(c.env.DB, payload.uid, payload.iat)))
+      account = await loadUser(c.env.DB, payload.uid)
+  }
+
+  const owner: { id: string; identity: 'user' | 'guest' } | null =
+    account && !account.is_banned
+      ? { id: account.id, identity: 'user' }
+      : typeof deviceId === 'string' &&
+          deviceId.length <= DEVICE_ID_MAX &&
+          DEVICE_ID_RE.test(deviceId)
+        ? { id: AI_GUEST_PREFIX + deviceId.toLowerCase(), identity: 'guest' }
+        : null
+
+  const settings = await loadAiSettings(c.env.DB)
+  const modelList = settings.provider === 'cloudflare' ? AI_CF_MODELS : AI_API_MODELS
+  const modelId = settings.provider === 'cloudflare' ? settings.cfModel : settings.apiModel
+  const identity = owner ? owner.identity : 'none'
+  const reply = (engine: 'cf' | 'local', candidates: string[]): Response =>
+    c.json({ ok: true, engine, candidates, model: modelId, identity })
+
+  // 身份无法识别、提供方关闭、或 API 凭据缺失：回落本地，不产生费用
+  if (!owner || settings.provider === 'off') return reply('local', [])
+  if (settings.provider === 'api' && !aiCapabilities(c.env).api.configured) {
+    return reply('local', [])
+  }
+
+  // 游客必须过 Turnstile；secret 未配置视为站点未启用，游客一律回落本地
+  if (owner.identity === 'guest') {
+    const secret = c.env.TURNSTILE_SECRET ?? ''
+    const passed =
+      secret.length > 0 &&
+      typeof turnstileToken === 'string' &&
+      turnstileToken.length > 0 &&
+      turnstileToken.length <= TURNSTILE_TOKEN_MAX &&
+      (await verifyTurnstile(
+        secret,
+        turnstileToken,
+        c.req.header('CF-Connecting-IP') ?? c.req.header('X-Forwarded-For') ?? '',
+      ))
+    if (!passed) return reply('local', [])
+  }
+
+  const want = AI_CANDIDATES[level]
+  const legalSet = new Set(legal)
+  const prompt = buildAiPrompt(game, legal.slice(0, AI_MAX_LEGAL_MOVES), want)
+  const temperature = modelTemperature(modelId, modelList, AI_TEMPERATURE[level])
+
+  let raw: string | null
+  try {
+    if (settings.provider === 'cloudflare') {
+      raw = (await askWorkersAiWithFallback(c.env, settings.cfModel, prompt, temperature)).text
+    } else {
+      raw = await askApiModel(
+        (c.env.AI_BASE_URL ?? '').trim(),
+        (c.env.AI_API_KEY ?? '').trim(),
+        settings.apiModel,
+        prompt,
+        temperature,
+        settings.reasoning,
+      )
+    }
+  } catch (err) {
+    // 调用失败（含超时）：回落本地
+    console.warn('ai request failed:', err)
+    return reply('local', [])
+  }
+  if (raw === null) return reply('local', [])
+
+  const candidates = parseAiCandidates(raw, legalSet, want)
+  // 输出里没有一个合法候选：回落本地
+  return candidates.length === 0 ? reply('local', []) : reply('cf', candidates)
+})
+
+// ---------- 管理员：AI 设置 ----------
+
+const AI_TEST_LEGAL_MOVES = ['e2e4', 'd2d4', 'g1f3', 'b1c3', 'f1e2', 'c2c4', 'e2e3', 'd2d3']
+const AI_TEST_PROMPT = buildAiPrompt('chess', AI_TEST_LEGAL_MOVES, 3)
+
+/** 读取当前 AI 配置，并返回两个提供方的模型目录与可用性 */
+app.get('/api/admin/settings/ai', requireAuth, requireAdmin, async (c) => {
+  return c.json({
+    settings: await loadAiSettings(c.env.DB),
+    apiModels: AI_API_MODELS,
+    cfModels: AI_CF_MODELS,
+    capabilities: aiCapabilities(c.env),
+  })
+})
+
+/** 保存 AI 配置。省略的字段保留原值。 */
+app.put('/api/admin/settings/ai', requireAuth, requireAdmin, async (c) => {
+  const body = await c.req.json().catch(() => null)
+  if (!body) badRequest('请求体格式错误')
+  const { provider, apiModel, cfModel, reasoning } = body as Record<string, unknown>
+
+  if (provider !== undefined && !AI_PROVIDERS.includes(provider as AiProvider)) {
+    badRequest('无效 AI 提供方')
+  }
+  if (apiModel !== undefined && !AI_API_MODELS.some((m) => m.id === apiModel)) {
+    badRequest('无效 AI 模型')
+  }
+  if (cfModel !== undefined && !AI_CF_MODELS.some((m) => m.id === cfModel)) {
+    badRequest('无效 Workers AI 模型')
+  }
+  if (reasoning !== undefined && typeof reasoning !== 'boolean') {
+    badRequest('推理开关无效')
+  }
+
+  const current = await loadAiSettings(c.env.DB)
+  const next: AiSettings = {
+    provider: provider === undefined ? current.provider : (provider as AiProvider),
+    apiModel: apiModel === undefined ? current.apiModel : (apiModel as string),
+    cfModel: cfModel === undefined ? current.cfModel : (cfModel as string),
+    reasoning: reasoning === undefined ? current.reasoning : (reasoning as boolean),
+  }
+
+  const rows: Array<[string, string]> = [
+    [SETTING_KEYS.provider, next.provider],
+    [SETTING_KEYS.apiModel, next.apiModel],
+    [SETTING_KEYS.cfModel, next.cfModel],
+    [SETTING_KEYS.reasoning, next.reasoning ? 'on' : 'off'],
+  ]
+  await Promise.all(
+    rows.map(([k, v]) =>
+      c.env.DB.prepare(
+        'INSERT INTO site_settings (key, value) VALUES (?, ?) ' +
+          'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+      ).bind(k, v).run(),
+    ),
+  )
+
+  return c.json({ settings: next, capabilities: aiCapabilities(c.env) })
+})
+
+/** 用当前配置真实调用一次模型，让管理员在切换前确认它确实可用 */
+app.post('/api/admin/settings/ai/test', requireAuth, requireAdmin, async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+  const current = await loadAiSettings(c.env.DB)
+
+  let provider: AiProvider = current.provider
+  if (body.provider !== undefined) {
+    if (!AI_PROVIDERS.includes(body.provider as AiProvider)) badRequest('无效 AI 提供方')
+    provider = body.provider as AiProvider
+  }
+  const apiModel = pickModel(AI_API_MODELS, body.apiModel, current.apiModel)
+  const cfModel = pickModel(AI_CF_MODELS, body.cfModel, current.cfModel)
+  const reasoning = body.reasoning === undefined ? current.reasoning : body.reasoning === true
+  const modelId = provider === 'cloudflare' ? cfModel : apiModel
+
+  const start = Date.now()
+  const temperature = AI_TEMPERATURE.hard
+  let raw: string | null
+  let shape = ''
+  try {
+    if (provider === 'cloudflare') {
+      const r = await askWorkersAiWithFallback(c.env, cfModel, AI_TEST_PROMPT, temperature)
+      raw = r.text
+      shape = r.shape + (r.error ? `，模型返回 error=${r.error.slice(0, 200)}` : '')
+    } else if (provider === 'off') {
+      return c.json({ ok: false, provider, model: modelId, error: '当前提供方已关闭，未发起调用' })
+    } else {
+      const baseUrl = (c.env.AI_BASE_URL ?? '').trim()
+      const apiKey = (c.env.AI_API_KEY ?? '').trim()
+      if (!baseUrl || !apiKey) {
+        return c.json({
+          ok: false, provider, model: modelId,
+          error: 'API 凭据未配置（AI_BASE_URL / AI_API_KEY）',
+        })
+      }
+      raw = await askApiModel(baseUrl, apiKey, apiModel, AI_TEST_PROMPT, temperature, reasoning)
+    }
+  } catch (err) {
+    // 必须把平台原话带回来：超时、额度超限、模型已下架、模型在本区不可用，
+    // 现象都是「调用失败」，只有原始信息能区分
+    console.warn('ai test failed:', err)
+    const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+    return c.json({ ok: false, provider, model: modelId, error: `调用失败：${detail.slice(0, 300)}` })
+  }
+
+  if (raw === null) {
+    return c.json({
+      ok: false, provider, model: modelId,
+      error: shape === 'binding-missing'
+        ? 'Workers AI 绑定不可用（env.CYM / env.AI 都没有 run）'
+        : '模型没有返回可用正文',
+      hint: provider === 'cloudflare'
+        ? shape === 'binding-missing'
+          ? '确认 Workers 已添加 Workers AI 绑定，且绑定名与代码读取的一致（当前兼容 CYM / AI 两个名字）'
+          : `Workers AI 文本生成的返回值是 { response: "..." }；实际拿到 ${shape}。若仍为空，多半是这个模型在账户所在区不可用——换一个模型再试`
+        : undefined,
+    })
+  }
+  const parsed = parseAiCandidates(raw, new Set(AI_TEST_LEGAL_MOVES), 3)
+  return c.json({
+    ok: parsed.length > 0,
+    provider,
+    model: modelId,
+    reasoning,
+    ms: Date.now() - start,
+    parsed,
+    raw: raw.slice(0, 300),
+  })
+})
+
+// ---------- 管理员网盘 ----------
+
+const STORAGE_LIMIT = 100 * 1024 * 1024 // 100MB
+const CHUNK_RAW_SIZE = 400 * 1024        // 400KB raw per chunk
+
+/**
+ * 网盘可存的文件类型白名单。客户端传来的 contentType 一律不信任：
+ * 它会原样写进 files.content_type，下载时又原样回吐成 Content-Type 响应头，
+ * 传个 text/html 就能让管理员下载后在浏览器里渲染出页面（存储型 XSS）。
+ * 白名单刻意不含 text/html、image/svg+xml、application/xhtml+xml 等浏览器可执行/可渲染的类型。
+ */
+const FILE_MIME_WHITELIST = new Set([
+  'application/octet-stream',
+  'application/pdf',
+  'application/zip',
+  'application/gzip',
+  'application/x-tar',
+  'application/x-7z-compressed',
+  'application/msword',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/csv',
+  'text/plain',
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'audio/mpeg',
+  'audio/ogg',
+  'video/mp4',
+  'video/webm',
+])
+
+/** 规范化客户端声明的 MIME：去掉参数段、统一小写，便于白名单精确比对。 */
+function normalizeMime(raw: unknown): string {
+  if (typeof raw !== 'string') return ''
+  return raw.trim().toLowerCase().split(';')[0]!.trim()
+}
+
+/** ArrayBuffer → base64 string (for chunk storage) */
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf)
+  let bin = ''
+  const chunk = 8192
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk) as unknown as number[])
+  }
+  return btoa(bin)
+}
+
+app.get('/api/admin/files/storage', requireAuth, requireAdmin, async (c) => {
+  const row = await c.env.DB.prepare(
+    'SELECT COALESCE(SUM(size), 0) AS used FROM files',
+  ).first<{ used: number }>()
+  const used = row?.used ?? 0
+  return c.json({ used, limit: STORAGE_LIMIT, percent: Math.round((used / STORAGE_LIMIT) * 10000) / 100 })
+})
+
+app.post('/api/admin/files', requireAuth, requireAdmin, async (c) => {
+  const body = await c.req.json().catch(() => null)
+  if (!body) badRequest('请求体格式错误')
+  const { filename, data, contentType } = (body ?? {}) as Record<string, unknown>
+  // 文件名最终会拼进 Content-Disposition；拦掉路径分隔符与空字节（引号由下载端的 encodeURIComponent 兜住）
+  if (
+    typeof filename !== 'string' ||
+    filename.length < 1 ||
+    filename.length > 255 ||
+    /[\\/\u0000]/.test(filename)
+  )
+    badRequest('文件名无效')
+  if (typeof data !== 'string' || data.length < 1)
+    badRequest('文件数据为空')
+  // 不信任客户端声明的 MIME：只接受白名单内的类型，见 FILE_MIME_WHITELIST 说明
+  const mimeType = normalizeMime(contentType) || 'application/octet-stream'
+  if (!FILE_MIME_WHITELIST.has(mimeType)) badRequest('不支持的文件类型')
+
+  // Check storage limit
+  const storageRow = await c.env.DB.prepare(
+    'SELECT COALESCE(SUM(size), 0) AS used FROM files',
+  ).first<{ used: number }>()
+  const used = storageRow?.used ?? 0
+
+  // Decode base64 to get raw size
+  let rawBytes: Uint8Array
+  try {
+    const bin = atob(data)
+    rawBytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) rawBytes[i] = bin.charCodeAt(i)
+  } catch {
+    badRequest('base64 数据无效')
+  }
+
+  const fileSize = rawBytes.length
+  if (fileSize > 5 * 1024 * 1024) badRequest('单个文件不能超过 5MB')
+  if (used + fileSize > STORAGE_LIMIT) badRequest(`存储空间不足，已用 ${used}B，上限 ${STORAGE_LIMIT}B`)
+
+  // Split into chunks
+  const chunks: string[] = []
+  for (let offset = 0; offset < fileSize; offset += CHUNK_RAW_SIZE) {
+    const slice = rawBytes.subarray(offset, Math.min(offset + CHUNK_RAW_SIZE, fileSize))
+    chunks.push(arrayBufferToBase64(slice.buffer.slice(slice.byteOffset, slice.byteOffset + slice.byteLength)))
+  }
+
+  // Insert file metadata
+  const fileResult = await c.env.DB.prepare(
+    'INSERT INTO files (filename, content_type, size, total_chunks) VALUES (?, ?, ?, ?)',
+  ).bind(filename, mimeType, fileSize, chunks.length).run()
+
+  const fileId = Number(fileResult.meta.last_row_id)
+
+  // Insert chunks in parallel
+  const chunkInserts = chunks.map((data, i) =>
+    c.env.DB.prepare(
+      'INSERT INTO file_chunks (file_id, chunk_index, data) VALUES (?, ?, ?)',
+    ).bind(fileId, i, data).run(),
+  )
+  await Promise.all(chunkInserts)
+
+  return c.json({ ok: true, fileId, size: fileSize, chunks: chunks.length })
+})
+
+app.get('/api/admin/files', requireAuth, requireAdmin, async (c) => {
+  const limit = Math.max(1, Math.min(Number(c.req.query('limit')) || 100, 500))
+  const { results } = await c.env.DB.prepare(
+    'SELECT id, filename, content_type AS contentType, size, total_chunks AS totalChunks, created_at AS createdAt FROM files ORDER BY created_at DESC LIMIT ?',
+  ).bind(limit).all<{
+    id: number; filename: string; contentType: string; size: number
+    totalChunks: number; createdAt: number
+  }>()
+  return c.json({ files: results ?? [] })
+})
+
+app.get('/api/admin/files/:id', requireAuth, requireAdmin, async (c) => {
+  const id = Number(c.req.param('id'))
+  if (!Number.isInteger(id) || id <= 0) badRequest('无效文件 ID')
+
+  const file = await c.env.DB.prepare(
+    'SELECT id, filename, content_type AS contentType, size, total_chunks AS totalChunks FROM files WHERE id = ?',
+  ).bind(id).first<{ id: number; filename: string; contentType: string; size: number; totalChunks: number }>()
+  if (!file) throw new HTTPError(404, '文件不存在')
+
+  // Fetch all chunks
+  const { results } = await c.env.DB.prepare(
+    'SELECT data FROM file_chunks WHERE file_id = ? ORDER BY chunk_index',
+  ).bind(id).all<{ data: string }>()
+
+  if (!results || results.length !== file.totalChunks) throw new HTTPError(500, '文件数据不完整')
+
+  // Reassemble
+  const parts: Uint8Array[] = []
+  for (const chunk of results) {
+    const bin = atob(chunk.data)
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+    parts.push(bytes)
+  }
+
+  const totalLen = parts.reduce((s, p) => s + p.length, 0)
+  const buf = new Uint8Array(totalLen)
+  let off = 0
+  for (const part of parts) {
+    buf.set(part, off)
+    off += part.length
+  }
+
+  return new Response(buf.buffer, {
+    headers: {
+      'Content-Type': file.contentType,
+      'Content-Disposition': `attachment; filename="${encodeURIComponent(file.filename)}"`,
+      'Content-Length': String(totalLen),
+      'Cache-Control': 'private, max-age=300',
+    },
+  })
+})
+
+app.delete('/api/admin/files/:id', requireAuth, requireAdmin, async (c) => {
+  const id = Number(c.req.param('id'))
+  if (!Number.isInteger(id) || id <= 0) badRequest('无效文件 ID')
+  await c.env.DB.prepare('DELETE FROM files WHERE id = ?').bind(id).run()
+  // chunks are cascade-deleted
+  return c.json({ ok: true })
 })
 
 app.notFound((c) => c.json({ error: '接口不存在' }, 404))

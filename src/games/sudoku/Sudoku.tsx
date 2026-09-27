@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GameProps, GameStatus } from '../../lib/types'
 import { GameOverlay } from '../shared/GameOverlay'
+import { useSaveGame } from '../shared/saveGame'
 import { useGameKeys } from '../shared/useGameKeys'
 import { toast } from '../../stores/toast'
 import shared from '../shared/game.module.css'
@@ -26,6 +27,17 @@ function formatTime(ms: number): string {
 }
 
 type Notes = Record<number, Set<number>>
+
+/** 存档里的形态：Set 落盘后变成数组，key 也一定是字符串 */
+interface SudokuSave {
+  givens: boolean[]
+  grid: number[]
+  solution: number[]
+  notes: Record<string, number[]>
+  mistakes: number
+  elapsedMs: number
+  selected: number
+}
 
 export default function Sudoku({ onGameOver }: GameProps) {
   const [status, setStatus] = useState<GameStatus>('idle')
@@ -66,7 +78,45 @@ export default function Sudoku({ onGameOver }: GameProps) {
     return () => window.clearInterval(t)
   }, [status])
 
+  const { hasSave, resume, reset } = useSaveGame<SudokuSave>(
+    'sudoku',
+    status,
+    () =>
+      givens.length > 0
+        ? {
+            givens,
+            grid,
+            solution,
+            notes: Object.fromEntries(
+              Object.entries(notes).map(([k, v]) => [k, [...v]]),
+            ),
+            mistakes,
+            // 只记已用时长，不把绝对开始时间存下去（否则跨天的档恢复后计时会跳）
+            elapsedMs: Date.now() - startTimeRef.current,
+            selected,
+          }
+        : null,
+    (s) => {
+      setGivens(s.givens)
+      setGrid(s.grid)
+      setSolution(s.solution)
+      const rebuilt: Notes = {}
+      for (const [k, arr] of Object.entries(s.notes ?? {})) {
+        if (Array.isArray(arr) && arr.length > 0) rebuilt[Number(k)] = new Set(arr)
+      }
+      setNotes(rebuilt)
+      setMistakes(s.mistakes)
+      setElapsed(s.elapsedMs)
+      startTimeRef.current = Date.now() - s.elapsedMs
+      setSelected(s.selected)
+      setScore(0)
+      finishedRef.current = false
+    },
+    () => score,
+  )
+
   const start = useCallback((d: Difficulty) => {
+    reset()
     const { puzzle, solution: sol } = generateSudoku(d)
     setGivens(puzzle.map((v) => v !== 0))
     setGrid(puzzle)
@@ -80,7 +130,7 @@ export default function Sudoku({ onGameOver }: GameProps) {
     finishedRef.current = false
     startTimeRef.current = Date.now()
     setStatus('running')
-  }, [])
+  }, [reset])
 
   const finish = useCallback(() => {
     if (finishedRef.current) return
@@ -282,6 +332,10 @@ export default function Sudoku({ onGameOver }: GameProps) {
             onStart={() => start(difficulty)}
             onResume={() => setStatus('running')}
             onRestart={() => start(difficulty)}
+            hasSave={hasSave}
+            onResumeSave={() => {
+              if (resume()) setStatus('running')
+            }}
             idleTitle="数独"
             idleHint="选择难度后开始。点击格子输入数字，完成后自动结算得分"
           />

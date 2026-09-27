@@ -83,7 +83,7 @@
 
 .favOn {
   color: var(--gold);
-  text-shadow: 0 0 10px rgba(255, 209, 102, 0.7);
+  text-shadow: var(--gold-glow);
 }
 
 .body {
@@ -104,6 +104,37 @@
   font-size: 13.5px;
   line-height: 1.55;
   color: var(--text-dim);
+}
+
+/* 收藏分类：只有已收藏才出现，避免未收藏的卡片多出一行噪音 */
+.catRow {
+  display: flex;
+  gap: 6px;
+}
+
+.catBtn {
+  flex: 1;
+  padding: 5px 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.catBtn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.catOn {
+  background: var(--gold-soft);
+  border-color: var(--gold-border);
+  color: var(--gold);
 }
 
 .footer {

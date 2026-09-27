@@ -1,0 +1,97 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: var(--navy-overlay);
+  backdrop-filter: blur(6px);
+  animation: fade-up 0.22s ease both;
+}
+
+.sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(760px, 100%);
+  max-height: calc(100vh - 40px);
+  padding: 18px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  animation: pop-in 0.24s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.title {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: 0.5px;
+}
+
+.previewWrap {
+  display: flex;
+  justify-content: center;
+  min-height: 120px;
+}
+
+.preview {
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1200 / 630;
+  max-width: 100%;
+  border-radius: 12px;
+  border: 1px dashed var(--border-strong);
+  background: var(--bg-deep);
+  color: var(--text-dim);
+  font-size: 15px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+
+.actions .btn {
+  flex: 1 1 180px;
+  text-align: center;
+  text-decoration: none;
+}
+
+.tip {
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+@media (max-width: 520px) {
+  .sheet {
+    padding: 14px;
+    gap: 10px;
+  }
+
+  .actions .btn {
+    flex: 1 1 100%;
+  }
+}

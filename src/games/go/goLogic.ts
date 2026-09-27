@@ -65,6 +65,8 @@ export interface MoveResult {
   board: Board
   /** 本步提掉的对方子数。 */
   captured: number
+  /** 本步提掉的对方子位置。恰好提 1 子时它就是劫点，所以必须一起带出来。 */
+  capturedStones: number[]
   /** 是否为禁着点（自杀或打劫）。 */
   illegal: boolean
 }
@@ -76,8 +78,8 @@ export function tryMove(
   color: Stone,
   koPoint: number | null,
 ): MoveResult {
-  if (board[i] !== 0) return { board, captured: 0, illegal: true }
-  if (koPoint === i) return { board, captured: 0, illegal: true }
+  if (board[i] !== 0) return { board, captured: 0, capturedStones: [], illegal: true }
+  if (koPoint === i) return { board, captured: 0, capturedStones: [], illegal: true }
 
   const next = [...board] as Board
   next[i] = color
@@ -101,20 +103,19 @@ export function tryMove(
   // 自杀判定：提完后自己这块是否无气
   const myGroup = groupOf(next, i)
   if (liberties(next, myGroup) === 0) {
-    return { board, captured: 0, illegal: true }
+    return { board, captured: 0, capturedStones: [], illegal: true }
   }
 
   // 打劫：本步只提了 1 子，且新棋盘与上一手前相同（简化为：提 1 子且本子也是 1 气 1 子块）
   // 严格打劫：记录上一手被提的单点，下一手不可下回该点
   // 这里返回"若提了 1 子，则该提子点成为 koPoint"
-  void capturedStones
-  return { board: next, captured, illegal: false }
+  return { board: next, captured, capturedStones, illegal: false }
 }
 
 /** 是否为打劫点（本步提了恰好 1 子）。 */
 export function makesKo(result: MoveResult): number | null {
-  // 简化：提 1 子即记为劫点（由调用方传递）
-  return result.captured === 1 ? result.board.indexOf(0) : null
+  // 提 1 子时那个空位就是劫点，不能用 indexOf(0) —— 那会取到全盘第一个空点
+  return result.capturedStones.length === 1 ? result.capturedStones[0]! : null
 }
 
 // ===== 数目（简化版：中国规则，数子法） =====
@@ -173,7 +174,7 @@ export function candidates(board: Board): number[] {
   return Array.from(set)
 }
 
-function evalMove(board: Board, i: number, color: Stone): number {
+export function evalMove(board: Board, i: number, color: Stone): number {
   const opp: Stone = color === 1 ? 2 : 1
   const result = tryMove(board, i, color, null)
   if (result.illegal) return -1
@@ -224,6 +225,40 @@ export function aiMove(
     .filter((x) => x.s >= best - 1)
     .map((x) => x.i)
   return top[Math.floor(Math.random() * top.length)]
+}
+
+// ===== 走法文本序列化（供 AI 模型 候选交换） =====
+
+/** 落子点 → 棋盘线性下标文本，如 "260" */
+export function moveToText(i: number): string {
+  return String(i)
+}
+
+
+/**
+ * 在给定候选集合内按现有评分选最优（AI 模型 粗筛后本地精筛）。
+ * 遵守打劫禁复；候选为空返回 null（等价于该方只能虚手）。
+ */
+export function bestOf(
+  board: Board,
+  color: Stone,
+  koPoint: number | null,
+  candidates: number[],
+): number | null {
+  let best: number | null = null
+  let bestScore = -Infinity
+  for (const i of candidates) {
+    if (i === koPoint) continue
+    if (board[i] !== 0) continue
+    const r = tryMove(board, i, color, koPoint)
+    if (r.illegal) continue
+    const s = evalMove(board, i, color)
+    if (s > bestScore) {
+      bestScore = s
+      best = i
+    }
+  }
+  return best
 }
 
 export { idx }

@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
     "preview": "vite preview",
+    "gen:icons": "node scripts/gen-icons.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json",
     "deploy": "vite build && wrangler deploy",
     "db:init:local": "wrangler d1 execute gamehub-db --local --file=./schema.sql",

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GameProps, GameStatus } from '../../lib/types'
 import { GameOverlay } from '../shared/GameOverlay'
 import shared from '../shared/game.module.css'
+import { useSaveGame } from '../shared/saveGame'
 import styles from './WhackAMole.module.css'
 
 const DURATION = 30 // 秒
@@ -33,14 +34,37 @@ export default function WhackAMole({ onGameOver }: GameProps) {
     gameOverRef.current(scoreRef.current)
   }, [])
 
+  const { hasSave, resume, reset } = useSaveGame(
+    'whackamole',
+    status,
+    () => ({ score, timeLeft, moles }),
+    (s) => {
+      // moles.until 是绝对时间戳，续玩时重新生成一个正常的停留窗口
+      setMoles(
+        s.timeLeft > 0
+          ? s.moles.map((m) => ({
+              ...m,
+              until: Date.now() + 900 + Math.random() * 600,
+            }))
+          : [],
+      )
+      setBonks([])
+      scoreRef.current = s.score
+      setScore(s.score)
+      setTimeLeft(s.timeLeft)
+    },
+    () => scoreRef.current,
+  )
+
   const start = useCallback(() => {
+    reset()
     scoreRef.current = 0
     setScore(0)
     setTimeLeft(DURATION)
     setMoles([])
     setBonks([])
     setStatus('running')
-  }, [])
+  }, [reset])
 
   // 倒计时
   useEffect(() => {
@@ -202,6 +226,10 @@ export default function WhackAMole({ onGameOver }: GameProps) {
           onStart={start}
           onResume={() => setStatus('running')}
           onRestart={start}
+          hasSave={hasSave}
+          onResumeSave={() => {
+            if (resume()) setStatus('running')
+          }}
           idleHint="限时 30 秒！普通地鼠 +10，金色地鼠 +30，手速要快"
         />
       </div>

@@ -19,7 +19,7 @@
 }
 
 .me {
-  border-color: rgba(0, 229, 255, 0.5);
+  border-color: var(--accent-border-strong);
   background: var(--accent-soft);
 }
 

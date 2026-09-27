@@ -3,7 +3,7 @@
   top: 0;
   z-index: 50;
   border-bottom: 1px solid var(--border);
-  background: rgba(11, 14, 26, 0.8);
+  background: var(--nav-bg);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
 }
@@ -26,7 +26,7 @@
 
 .logoIcon {
   font-size: 26px;
-  filter: drop-shadow(0 0 12px rgba(124, 92, 255, 0.6));
+  filter: drop-shadow(0 0 12px var(--logo-glow));
 }
 
 .logoText em {
@@ -39,8 +39,11 @@
 
 .nav {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   flex: 1;
+  /* 窄屏下链接放不下时折行，而不是被裁掉 */
+  min-width: 0;
 }
 
 .navLink {
@@ -55,7 +58,7 @@
 .navLink.active {
   color: var(--text);
   background: var(--primary-soft);
-  box-shadow: inset 0 0 0 1px rgba(124, 92, 255, 0.4);
+  box-shadow: inset 0 0 0 1px var(--primary-inset);
 }
 
 .actions {
@@ -63,6 +66,27 @@
   align-items: center;
   gap: 10px;
   margin-left: auto;
+}
+
+/* 图标按钮：不依赖 .btn 的文字排版，纯图标保证暗/亮主题下都一样清晰 */
+.themeBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+.themeBtn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 .userChip {
@@ -74,19 +98,6 @@
   border-radius: 999px;
   background: var(--surface);
   transition: border-color 0.2s ease;
-}
-
-.avatar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--primary), var(--accent));
-  color: #fff;
-  font-size: 14px;
-  font-weight: 800;
 }
 
 .username {
@@ -105,6 +116,10 @@
   }
   .userChip:hover {
     border-color: var(--primary);
+  }
+  .themeBtn:hover {
+    border-color: var(--primary);
+    transform: scale(1.06);
   }
 }
 
@@ -126,10 +141,6 @@
   }
   .navLinkSecondary {
     display: none;
-  }
-  .avatar {
-    width: 34px;
-    height: 34px;
   }
   .username {
     display: none;

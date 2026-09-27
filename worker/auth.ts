@@ -66,9 +66,11 @@ export async function signToken(
   payload: Record<string, unknown>,
   secret: string,
 ): Promise<string> {
+  const now = Math.floor(Date.now() / 1000)
   const header = b64urlEncode(encoder.encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' })))
   const body = b64urlEncode(
-    encoder.encode(JSON.stringify({ ...payload, exp: Math.floor(Date.now() / 1000) + TOKEN_TTL })),
+    // iat 是令牌签发时刻，改密码/被重置时据此吊销所有早于该时刻的旧令牌
+    encoder.encode(JSON.stringify({ ...payload, iat: now, exp: now + TOKEN_TTL })),
   )
   const data = `${header}.${body}`
   const sig = await crypto.subtle.sign('HMAC', await hmacKey(secret), encoder.encode(data))
@@ -78,6 +80,8 @@ export async function signToken(
 export interface TokenPayload {
   uid: string
   exp: number
+  /** 签发时刻（秒）。上线前的旧令牌没有此字段，视为「未知」按最早签发处理。 */
+  iat?: number
   admin?: boolean
 }
 
@@ -88,14 +92,16 @@ export async function verifyToken(
   const parts = token.split('.')
   if (parts.length !== 3) return null
   const [header, body, sig] = parts
-  const ok = await crypto.subtle.verify(
-    'HMAC',
-    await hmacKey(secret),
-    b64urlDecode(sig),
-    encoder.encode(`${header}.${body}`),
-  )
-  if (!ok) return null
   try {
+    // b64urlDecode 对畸形字符会抛异常，必须纳入 catch：
+    // 否则伪造/损坏的 Cookie 会让 verifyToken 抛错、把 401 变成 500
+    const ok = await crypto.subtle.verify(
+      'HMAC',
+      await hmacKey(secret),
+      b64urlDecode(sig),
+      encoder.encode(`${header}.${body}`),
+    )
+    if (!ok) return null
     const payload = JSON.parse(new TextDecoder().decode(b64urlDecode(body)))
     if (
       typeof payload.uid !== 'string' ||
@@ -115,3 +121,49 @@ export function newUserId(): string {
 }
 
 export const COOKIE_NAME = 'gamehub_token'
+
+/**
+ * 令牌 Cookie 统一属性：所有签发/注销都必须走这里，避免漏配 secure。
+ * secure: true 让浏览器只在 HTTPS 下发送，明文 HTTP 泄露时无用。
+ */
+export const COOKIE_OPTS = {
+  httpOnly: true,
+  sameSite: 'Lax',
+  secure: true,
+  path: '/',
+} as const
+
+/**
+ * 失效用户的全部旧令牌：把「密码变更时刻」记下来。
+ * 之后 requireAuth 对比 token.iat 与此时刻，早于该时刻的令牌一律拒绝。
+ * 用独立表而非给 users 加列——全库没有 ALTER TABLE 先例。
+ */
+export async function recordPasswordChange(
+  db: D1Database,
+  userId: string,
+): Promise<void> {
+  await db
+    .prepare(
+      'INSERT INTO user_password_changes (user_id, changed_at) VALUES (?, unixepoch()) ' +
+        'ON CONFLICT(user_id) DO UPDATE SET changed_at = unixepoch()',
+    )
+    .bind(userId)
+    .run()
+}
+
+/**
+ * 该用户的令牌是否已被吊销：密码在令牌签发之后被改过即吊销。
+ * token 无 iat（上线前的旧令牌）按最早签发处理，一改密码就作废——这是安全侧的默认。
+ */
+export async function isTokenRevoked(
+  db: D1Database,
+  userId: string,
+  iat: number | undefined,
+): Promise<boolean> {
+  const row = await db
+    .prepare('SELECT changed_at FROM user_password_changes WHERE user_id = ?')
+    .bind(userId)
+    .first<{ changed_at: number }>()
+  if (!row) return false
+  return row.changed_at > (iat ?? 0)
+}

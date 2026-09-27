@@ -1,24 +1,79 @@
 import { Suspense, useCallback, useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { Leaderboard } from '../components/Leaderboard'
+import { ScoreShareCard } from '../components/ScoreShareCard'
 import { getGame } from '../games/registry'
-import { api } from '../lib/api'
+import { api, FAVORITE_CATEGORIES, type FavoriteCategory } from '../lib/api'
 import { getLocalBest, saveLocalBest, useLocalBest } from '../lib/localBest'
+import { usePlayTime } from '../lib/playtime'
+import type { ShareCardOpts } from '../lib/shareCard'
 import type { LeaderEntry } from '../lib/types'
 import { useAuth } from '../stores/auth'
 import { toast } from '../stores/toast'
 import styles from './GamePage.module.css'
 
+/** 挑战目标分的合法范围：拦住 NaN、负数、以及有人塞进来的超大值 */
+const MAX_CHALLENGE = 10_000_000
+const challengeKey = (gameId: string) => `gamehub.challenge.${gameId}`
+
+function readChallenge(gameId: string): number | null {
+  try {
+    const raw = localStorage.getItem(challengeKey(gameId))
+    const n = raw === null ? NaN : Number(raw)
+    return Number.isInteger(n) && n >= 0 && n <= MAX_CHALLENGE ? n : null
+  } catch {
+    return null
+  }
+}
+
+function normalizeTarget(value: string | null): number | null {
+  if (value === null) return null
+  const n = Number(value)
+  return Number.isInteger(n) && n >= 0 && n <= MAX_CHALLENGE ? n : null
+}
+
+/** 用 BASE_URL 拼，站点挂到子路径时链接才有效 */
+function challengeUrl(gameId: string, score: number): string {
+  const base = (import.meta.env.BASE_URL ?? '/').replace(/\/+$/, '')
+  const target = Math.max(1, Math.round(score))
+  return `${window.location.origin}${base}/challenge/${encodeURIComponent(gameId)}?t=${target}`
+}
+
 export function GamePage() {
   const { gameId } = useParams()
   const meta = getGame(gameId)
-  const { user, status, favorites, toggleFavorite } = useAuth()
+  const { user, status, isFavorite, favoriteCategory, setFavoriteCategory, toggleFavorite } =
+    useAuth()
   const localBest = useLocalBest(meta?.id ?? '')
+  const [searchParams] = useSearchParams()
+
+  // 只在登录时上报（后端 requireAuth）；游客的游玩时长不追踪
+  usePlayTime(meta?.id ?? '', status === 'authed')
 
   const [cloudBest, setCloudBest] = useState(0)
   const [leaderboard, setLeaderboard] = useState<LeaderEntry[]>([])
   const [lbLoading, setLbLoading] = useState(true)
   const [favBusy, setFavBusy] = useState(false)
+  const [shareCard, setShareCard] = useState<ShareCardOpts | null>(null)
+  /** 挑战目标分：朋友发来的链接，或之前保存过的挑战 */
+  const [challenge, setChallenge] = useState<number | null>(null)
+
+  // 链接里的 t 优先，顺手存下来，下次直接进这个游戏的页面还在
+  useEffect(() => {
+    if (!gameId) return
+    const fromUrl = normalizeTarget(searchParams.get('t'))
+    if (fromUrl !== null) {
+      try {
+        localStorage.setItem(challengeKey(gameId), String(fromUrl))
+      } catch {
+        // 存储不可用（隐私模式等）时照样能玩，只是不记住挑战
+      }
+      setChallenge(fromUrl)
+    } else {
+      setChallenge(readChallenge(gameId))
+    }
+    setShareCard(null)
+  }, [gameId, searchParams])
 
   const loadLeaderboard = useCallback(() => {
     if (!meta) return
@@ -65,8 +120,35 @@ export function GamePage() {
       } else if (isNewLocal) {
         toast(`新纪录 ${score} 分！登录后可上榜`, 'info')
       }
+
+      // 挑战结算：超过就清掉本地挑战，让横幅消失
+      if (challenge !== null) {
+        if (score > challenge) {
+          toast(`🏆 挑战成功！超过了 ${challenge.toLocaleString()} 分`, 'success')
+          try {
+            localStorage.removeItem(challengeKey(meta.id))
+          } catch {
+            // 同上，存不了不影响
+          }
+          setChallenge(null)
+        } else {
+          toast(`还差 ${(challenge - score).toLocaleString()} 分就能超过挑战目标`, 'info')
+        }
+      }
+
+      // 零分不值得分享；卡片里能一键保存图片 / 复制 / 发起挑战
+      if (score > 0) {
+        setShareCard({
+          gameEmoji: meta.emoji,
+          gameName: meta.name,
+          score,
+          username: user?.username ?? '游客',
+          best: Math.max(localBest, cloudBest),
+          challengeUrl: challengeUrl(meta.id, score),
+        })
+      }
     },
-    [meta, status, loadLeaderboard],
+    [meta, status, loadLeaderboard, challenge, user, localBest, cloudBest],
   )
 
   const handleFav = async () => {
@@ -94,7 +176,8 @@ export function GamePage() {
   }
 
   const Game = meta.Component
-  const isFav = favorites.includes(meta.id)
+  const isFav = isFavorite(meta.id)
+  const favCategory = favoriteCategory(meta.id)
   const myBest = Math.max(localBest, cloudBest)
   const localRecord = getLocalBest(meta.id)
 
@@ -106,6 +189,28 @@ export function GamePage() {
         <span>{meta.name}</span>
       </div>
 
+      {challenge !== null && (
+        <div className={styles.challengeBanner}>
+          <span className={styles.challengeText}>
+            🎯 <strong>{challenge.toLocaleString()}</strong> 分挑战进行中，你能超过吗？
+          </span>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => {
+              try {
+                localStorage.removeItem(challengeKey(meta.id))
+              } catch {
+                // 存储不可用时忽略
+              }
+              setChallenge(null)
+            }}
+          >
+            退出挑战
+          </button>
+        </div>
+      )}
+
       <div className={styles.layout}>
         <section className={styles.gameArea}>
           <div className={styles.gameHeader}>
@@ -113,14 +218,35 @@ export function GamePage() {
               <span className={styles.gameEmoji}>{meta.emoji}</span>
               {meta.name}
             </h1>
-            <button
-              type="button"
-              className={`btn ${isFav ? 'btn-primary' : ''}`}
-              onClick={handleFav}
-              disabled={favBusy}
-            >
-              {isFav ? '★ 已收藏' : '☆ 收藏'}
-            </button>
+            <div className={styles.headerActions}>
+              <button
+                type="button"
+                className={`btn ${isFav ? 'btn-primary' : ''}`}
+                onClick={handleFav}
+                disabled={favBusy}
+              >
+                {isFav ? '★ 已收藏' : '☆ 收藏'}
+              </button>
+              {isFav && user && (
+                <label className={styles.catLabel}>
+                  分类
+                  <select
+                    value={favCategory}
+                    onChange={(e) =>
+                      setFavoriteCategory(meta.id, e.target.value as FavoriteCategory).catch(() =>
+                        toast('分类更新失败，请重试', 'error'),
+                      )
+                    }
+                  >
+                    {FAVORITE_CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
           </div>
 
           <Suspense fallback={<div className={styles.loading}>加载中…</div>}>
@@ -180,6 +306,12 @@ export function GamePage() {
           </section>
         </aside>
       </div>
+
+      <ScoreShareCard
+        open={shareCard !== null}
+        card={shareCard}
+        onClose={() => setShareCard(null)}
+      />
     </main>
   )
 }

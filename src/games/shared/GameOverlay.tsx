@@ -8,6 +8,9 @@ interface GameOverlayProps {
   onStart: () => void
   onResume: () => void
   onRestart: () => void
+  /** 本地有未完成的上局存档 */
+  hasSave?: boolean
+  onResumeSave?: () => void
   idleTitle?: string
   idleHint?: string
 }
@@ -20,6 +23,8 @@ export function GameOverlay({
   onStart,
   onResume,
   onRestart,
+  hasSave,
+  onResumeSave,
   idleTitle = '准备好了吗？',
   idleHint,
 }: GameOverlayProps) {
@@ -29,18 +34,24 @@ export function GameOverlay({
     <div className={styles.overlay}>
       {status === 'idle' && (
         <>
-          <h3 className={styles.overlayTitle}>{idleTitle}</h3>
+          <h3 className={styles.overlayTitle}>{hasSave ? '上次玩到一半' : idleTitle}</h3>
           {idleHint && <p className={styles.overlayHint}>{idleHint}</p>}
+          {hasSave && onResumeSave && (
+            <button type="button" className="btn btn-primary" onClick={onResumeSave} autoFocus>
+              ⏵ 继续上局
+            </button>
+          )}
           <button
             type="button"
-            className="btn btn-primary"
+            className={hasSave && onResumeSave ? 'btn btn-ghost' : 'btn btn-primary'}
             onClick={onStart}
-            autoFocus
+            autoFocus={!hasSave || !onResumeSave}
           >
-            ▶ 开始游戏
+            {hasSave ? '🔄 重新开始' : '▶ 开始游戏'}
           </button>
         </>
       )}
+
 
       {status === 'paused' && (
         <>

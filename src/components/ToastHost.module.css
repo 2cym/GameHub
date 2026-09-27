@@ -29,13 +29,13 @@
 }
 
 .success {
-  border-color: rgba(61, 220, 151, 0.45);
+  border-color: var(--success-border);
 }
 
 .error {
-  border-color: rgba(255, 107, 107, 0.5);
+  border-color: var(--danger-border-strong);
 }
 
 .info {
-  border-color: rgba(0, 229, 255, 0.4);
+  border-color: var(--accent-border-strong);
 }

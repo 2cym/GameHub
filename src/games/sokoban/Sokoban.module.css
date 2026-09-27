@@ -27,12 +27,12 @@
   position: relative;
   width: var(--cell);
   height: var(--cell);
-  background: #1b2138;
+  background: var(--surface-2);
 }
 
 .cell.wall {
-  background: linear-gradient(145deg, #3a4468, #232c4a);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  background: linear-gradient(145deg, var(--slate-1), var(--slate-2));
+  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 
 .cell.goal::after {
@@ -85,8 +85,8 @@
   width: 62%;
   height: 62%;
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #7ceeff, #0ea0c0);
-  box-shadow: 0 0 12px rgba(0, 229, 255, 0.55);
+  background: radial-gradient(circle at 35% 35%, var(--accent-tint), var(--accent-deep));
+  box-shadow: var(--accent-glow);
   z-index: 2;
 }
 

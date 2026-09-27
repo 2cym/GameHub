@@ -17,15 +17,14 @@
     520px,
     calc(100vw - 2 * var(--container-pad) - 2 * var(--game-pad-x) - 20px)
   );
-  --gap: calc(var(--size) / 19);
   display: grid;
-  grid-template-columns: repeat(19, var(--gap));
-  grid-template-rows: repeat(19, var(--gap));
-  width: max-content;
-  max-width: 100%;
+  grid-template-columns: repeat(19, 1fr);
+  grid-template-rows: repeat(19, 1fr);
+  width: 100%;
+  max-width: var(--size);
   aspect-ratio: 1;
   margin: 0 auto;
-  padding: calc(var(--gap) * 0.5);
+  padding: 8px;
   background: linear-gradient(145deg, #e8c884, #c89854);
   border-radius: 6px;
   box-shadow: var(--shadow);
@@ -34,8 +33,6 @@
 
 .cell {
   position: relative;
-  width: var(--gap);
-  height: var(--gap);
   cursor: pointer;
 }
 .cell::before,
@@ -186,6 +183,13 @@
   .controls {
     max-width: 220px;
     padding-top: 4px;
+  }
+}
+
+/* 平板横屏：19×19 大棋盘尤其需要空间，按剩余高度放大 */
+@media (min-width: 900px) and (orientation: landscape) {
+  .board {
+    --size: min(700px, calc(100vh - 230px));
   }
 }
 
