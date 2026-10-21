@@ -260,3 +260,4 @@ npm run db:init:local
 - 依赖 `crypto.subtle`（浏览器与 Workers 运行时均内置）、CSS Grid、CSS 自定义属性与 `backface-visibility`
 - 使用 `env(safe-area-inset-bottom)` 适配 iPhone 底部横条
 - 尊重 `prefers-reduced-motion`，对动画敏感的玩家会自动降低动效
+本网站由AI编写
